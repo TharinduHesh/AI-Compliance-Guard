@@ -11,7 +11,7 @@ python-docx==1.1.0
 pillow>=10.3.0
 
 # NLP & AI
-transformers==4.37.2
+transformers>=4.44.0
 torch>=2.2.0
 spacy>=3.7.2
 scikit-learn>=1.4.0
@@ -20,7 +20,7 @@ pandas>=2.2.0
 sentence-transformers>=2.3.1
 
 # LLM (Gemini + Llama)
-google-generativeai>=0.8.0
+google-genai>=1.0.0
 llama-cpp-python>=0.2.0
 huggingface_hub>=0.20.0
 

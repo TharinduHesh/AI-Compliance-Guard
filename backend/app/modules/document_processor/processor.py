@@ -118,7 +118,7 @@ class DocumentProcessor:
         }
     
     def _extract_docx(self, file_path: str) -> Dict[str, any]:
-        """Extract text from DOCX document"""
+        """Extract text from DOCX document, including tables and headers."""
         doc = Document(file_path)
         
         paragraphs = []
@@ -126,10 +126,21 @@ class DocumentProcessor:
             if para.text.strip():
                 paragraphs.append(para.text.strip())
         
+        # Also extract text from tables (common in compliance docs)
+        table_texts = []
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = ' | '.join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                if row_text.strip():
+                    table_texts.append(row_text)
+        
         full_text = '\n\n'.join(paragraphs)
+        if table_texts:
+            full_text += '\n\n--- Tables ---\n' + '\n'.join(table_texts)
         
         metadata = {
             'num_paragraphs': len(paragraphs),
+            'num_tables': len(doc.tables),
             'file_name': Path(file_path).name,
             'file_type': 'DOCX',
             'extracted_at': datetime.utcnow().isoformat()
@@ -239,15 +250,18 @@ class DocumentProcessor:
         for section in sections:
             content = section['content']
             
-            # Split by common clause delimiters
-            # Patterns: bullet points, numbered lists, sentences
-            clause_texts = re.split(r'\n\s*[-•]\s*|\n\s*\d+\.\s*|\.\s+(?=[A-Z])', content)
+            # Split by common clause delimiters:
+            # bullet points, numbered lists, sentences, or paragraph breaks
+            clause_texts = re.split(
+                r'\n\s*[-•]\s*|\n\s*\d+\.\s*|\.\s+(?=[A-Z])|\n{2,}',
+                content
+            )
             
             for clause_text in clause_texts:
                 clause_text = clause_text.strip()
                 
-                # Only include meaningful clauses (min 20 characters)
-                if len(clause_text) > 20:
+                # Only include meaningful clauses (min 15 characters)
+                if len(clause_text) > 15:
                     clauses.append({
                         'section': section['header'],
                         'text': clause_text,

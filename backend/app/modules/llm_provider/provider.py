@@ -13,6 +13,7 @@ For Llama: auto-downloads the model on first run if LLAMA_MODEL_PATH is empty.
 
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Optional, List, Dict
 
@@ -138,13 +139,13 @@ class LLMProvider:
             logger.warning(f"Unknown LLM_PROVIDER: {self.provider}")
 
     def _load_gemini(self):
-        """Load Google Gemini model via API key."""
+        """Load Google Gemini model via the new google-genai SDK."""
         try:
-            import google.generativeai as genai
+            from google import genai
         except ImportError:
             raise ImportError(
-                "google-generativeai is not installed. "
-                "Run:  pip install google-generativeai"
+                "google-genai is not installed. "
+                "Run:  pip install google-genai"
             )
 
         api_key = settings.GEMINI_API_KEY
@@ -153,20 +154,9 @@ class LLMProvider:
                 "GEMINI_API_KEY is not set. Add it to your .env file."
             )
 
-        genai.configure(api_key=api_key)
-
-        generation_config = genai.types.GenerationConfig(
-            max_output_tokens=settings.GEMINI_MAX_TOKENS,
-            temperature=settings.GEMINI_TEMPERATURE,
-            top_p=settings.GEMINI_TOP_P,
-        )
-
-        self._gemini_model = genai.GenerativeModel(
-            model_name=settings.GEMINI_MODEL,
-            generation_config=generation_config,
-        )
+        self._gemini_client = genai.Client(api_key=api_key)
         self._is_loaded = True
-        logger.info(f"Gemini model loaded: {settings.GEMINI_MODEL}")
+        logger.info(f"Gemini client initialised (model: {settings.GEMINI_MODEL})")
 
     def _load_llama_cpp(self):
         """Load model via llama-cpp-python."""
@@ -257,8 +247,12 @@ class LLMProvider:
         if context_info:
             full_system += f"\n\n### Context\n{context_info}"
 
-        max_tok = max_tokens or settings.LLAMA_MAX_TOKENS
-        temp = temperature or settings.LLAMA_TEMPERATURE
+        if self.provider == "gemini":
+            max_tok = max_tokens or settings.GEMINI_MAX_TOKENS
+            temp = temperature or settings.GEMINI_TEMPERATURE
+        else:
+            max_tok = max_tokens or settings.LLAMA_MAX_TOKENS
+            temp = temperature or settings.LLAMA_TEMPERATURE
 
         if self.provider == "gemini":
             return self._generate_gemini(full_system, messages, max_tok, temp)
@@ -276,34 +270,60 @@ class LLMProvider:
         max_tokens: int,
         temperature: float,
     ) -> str:
-        """Generate response using Google Gemini API."""
-        import google.generativeai as genai
+        """Generate response using Google Gemini API (google-genai SDK)."""
+        from google.genai import types
 
-        # Build Gemini-compatible chat history
-        gemini_history = []
-        for m in messages[:-1]:  # all except the last user message
+        # Build contents list for the API
+        contents = []
+        for m in messages:
             role = "user" if m["role"] == "user" else "model"
-            gemini_history.append({"role": role, "parts": [m["content"]]})
+            contents.append(types.Content(
+                role=role,
+                parts=[types.Part.from_text(text=m["content"])],
+            ))
 
-        # Start chat with system prompt and history
-        chat = self._gemini_model.start_chat(history=gemini_history)
-
-        # The last message should be the user's current query
-        last_message = messages[-1]["content"] if messages else ""
-
-        # Prepend system context for the first message
-        if system and not gemini_history:
-            last_message = f"[System Instructions]: {system}\n\n[User Query]: {last_message}"
-
-        response = chat.send_message(
-            last_message,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=max_tokens,
-                temperature=temperature,
-                top_p=settings.GEMINI_TOP_P,
-            ),
+        config = types.GenerateContentConfig(
+            system_instruction=system if system else None,
+            max_output_tokens=max_tokens,
+            temperature=temperature,
+            top_p=settings.GEMINI_TOP_P,
         )
-        return response.text.strip()
+
+        # Models to try, in order — if primary hits rate limit, try fallbacks
+        models_to_try = [settings.GEMINI_MODEL]
+        fallbacks = ["gemini-2.5-flash-lite", "gemini-2.0-flash-lite", "gemini-2.0-flash"]
+        for fb in fallbacks:
+            if fb != settings.GEMINI_MODEL:
+                models_to_try.append(fb)
+
+        last_exc = None
+        for model_name in models_to_try:
+            for attempt in range(3):
+                try:
+                    response = self._gemini_client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=config,
+                    )
+                    if model_name != settings.GEMINI_MODEL:
+                        logger.info(f"Used fallback model: {model_name}")
+                    return response.text.strip()
+                except Exception as e:
+                    last_exc = e
+                    err_str = str(e).lower()
+                    if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
+                        wait = (attempt + 1) * 3
+                        logger.warning(
+                            f"Gemini rate-limited on {model_name} (attempt {attempt+1}/3). "
+                            f"Retrying in {wait}s..."
+                        )
+                        time.sleep(wait)
+                    else:
+                        raise
+            # All retries exhausted for this model, try next fallback
+            logger.warning(f"Model {model_name} quota exhausted, trying next fallback...")
+
+        raise RuntimeError(f"All Gemini models failed after retries: {last_exc}")
 
     def _generate_llama_cpp(
         self,

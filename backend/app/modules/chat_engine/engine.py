@@ -163,10 +163,18 @@ class ComplianceChatEngine:
                     'clauses': clauses,
                 }
 
+            # Store the full text for LLM context
+            full_text = result.get('full_text', '')
+            if not full_text and clauses:
+                full_text = '\n'.join(c.get('text', '') for c in clauses)
+
             conv['document'] = result
             conv['document_name'] = file_name
             conv['document_clauses'] = clauses
+            conv['document_full_text'] = full_text
             conv['analysis_cache'] = {}  # reset cache on new doc
+
+            logger.info(f"Document attached: {file_name}, {len(clauses)} clauses, {len(full_text)} chars of text")
 
             summary = {
                 'file_name': file_name,
@@ -179,6 +187,35 @@ class ComplianceChatEngine:
         except Exception as e:
             logger.error(f"Document attach error: {e}", exc_info=True)
             raise
+
+    def _build_document_context(self, conv: Dict, max_chars: int = 12000) -> str:
+        """Build a context string with the document content for LLM calls."""
+        doc_name = conv.get('document_name', 'Unknown')
+        full_text = conv.get('document_full_text', '')
+        clauses = conv.get('document_clauses', [])
+
+        parts = [f"Document: {doc_name}"]
+        parts.append(f"Total clauses: {len(clauses)}")
+
+        if full_text:
+            truncated = full_text[:max_chars]
+            if len(full_text) > max_chars:
+                truncated += f"\n... [truncated, {len(full_text)} total chars]"
+            parts.append(f"\n--- DOCUMENT CONTENT ---\n{truncated}\n--- END DOCUMENT ---")
+        elif clauses:
+            parts.append("\nDocument clauses:")
+            char_count = 0
+            for cl in clauses:
+                txt = cl.get('text', '')
+                sec = cl.get('section', '?')
+                entry = f"[Section {sec}]: {txt}"
+                if char_count + len(entry) > max_chars:
+                    parts.append("... [more clauses truncated]")
+                    break
+                parts.append(entry)
+                char_count += len(entry)
+
+        return "\n".join(parts)
 
     def _basic_extract(self, file_path: str, file_name: str) -> List[Dict]:
         """Very basic extraction fallback."""
@@ -249,8 +286,23 @@ class ComplianceChatEngine:
         if self._is_greeting(msg_lower):
             return self._greeting_response(conv)
 
-        # No document uploaded yet – guide user
+        # No document uploaded yet – try LLM for any question, fallback to guide
         if not conv.get('document_clauses'):
+            if self.llm is not None:
+                try:
+                    history = conv.get('messages', [])[-6:]
+                    llm_messages = [{"role": m["role"], "content": m["content"]} for m in history]
+                    if not llm_messages or llm_messages[-1]["content"] != message:
+                        llm_messages.append({"role": "user", "content": message})
+                    return self.llm.generate(
+                        messages=llm_messages,
+                        context_info="The user has NOT uploaded a compliance document yet. "
+                                     "Answer their question naturally. If it relates to compliance, "
+                                     "mention they can upload a document for detailed analysis.",
+                    )
+                except Exception as e:
+                    logger.error(f"LLM error (no-doc chat): {e}")
+            # LLM not available — rule-based fallback
             if self._is_general_question(msg_lower):
                 return self._answer_general_question(msg_lower)
             return self._no_document_response()
@@ -382,6 +434,19 @@ class ComplianceChatEngine:
         )
 
     def _document_summary_response(self, conv: Dict) -> str:
+        # Use LLM for a rich summary if available
+        if self.llm is not None:
+            context_info = self._build_document_context(conv)
+            try:
+                return self.llm.generate(
+                    messages=[{"role": "user", "content": "Give me a comprehensive summary of this document. Include the main topics, key policies, and any compliance-relevant sections."}],
+                    context_info=context_info,
+                    max_tokens=4096,
+                )
+            except Exception as e:
+                logger.error(f"LLM summary error: {e}")
+
+        # Fallback: static summary
         doc = conv.get('document', {})
         name = conv.get('document_name', 'Unknown')
         clauses = conv.get('document_clauses', [])
@@ -791,44 +856,12 @@ class ComplianceChatEngine:
         )
 
     def _contextual_answer(self, conv: Dict, message: str) -> str:
-        """Try LLM first, then fall back to keyword matching."""
+        """Try LLM first with full document context, then fall back to keyword matching."""
         clauses = conv.get('document_clauses', [])
 
-        # Gather relevant clauses via keyword scoring
-        msg_lower = message.lower()
-        words = set(re.findall(r'\b\w{4,}\b', msg_lower))
-
-        scored_clauses = []
-        for clause in clauses:
-            text_lower = clause.get('text', '').lower()
-            clause_words = set(re.findall(r'\b\w{4,}\b', text_lower))
-            overlap = len(words & clause_words)
-            if overlap > 0:
-                scored_clauses.append((overlap, clause))
-        scored_clauses.sort(key=lambda x: x[0], reverse=True)
-        top_clauses = scored_clauses[:5]
-
-        # ── LLM path ──
+        # ── LLM path — send full document content ──
         if self.llm is not None:
-            context_parts = []
-            doc_name = conv.get('document_name', 'document')
-            context_parts.append(f"Document: {doc_name}")
-            context_parts.append(f"Total clauses: {len(clauses)}")
-            if top_clauses:
-                context_parts.append("\nRelevant clauses from the user's document:")
-                for _, cl in top_clauses:
-                    sec = cl.get('section', '?')
-                    txt = cl.get('text', '')[:300]
-                    context_parts.append(f"[Section {sec}]: {txt}")
-            else:
-                # Include first few clauses as general context
-                context_parts.append("\nFirst clauses from the document:")
-                for cl in clauses[:5]:
-                    sec = cl.get('section', '?')
-                    txt = cl.get('text', '')[:300]
-                    context_parts.append(f"[Section {sec}]: {txt}")
-
-            context_info = "\n".join(context_parts)
+            context_info = self._build_document_context(conv)
 
             # Build conversation history for the LLM (last 6 messages)
             history = conv.get('messages', [])[-6:]
@@ -841,10 +874,25 @@ class ComplianceChatEngine:
                 return self.llm.generate(
                     messages=llm_messages,
                     context_info=context_info,
+                    max_tokens=4096,
                 )
             except Exception as e:
                 logger.error(f"LLM generation error: {e}")
                 # Fall through to rule-based
+
+        # ── Rule-based fallback — keyword scoring ──
+        msg_lower = message.lower()
+        words = set(re.findall(r'\b\w{4,}\b', msg_lower))
+
+        scored_clauses = []
+        for clause in clauses:
+            text_lower = clause.get('text', '').lower()
+            clause_words = set(re.findall(r'\b\w{4,}\b', text_lower))
+            overlap = len(words & clause_words)
+            if overlap > 0:
+                scored_clauses.append((overlap, clause))
+        scored_clauses.sort(key=lambda x: x[0], reverse=True)
+        top_clauses = scored_clauses[:5]
 
         # ── Rule-based fallback ──
         if not clauses:

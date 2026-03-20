@@ -104,8 +104,20 @@ async def upload_and_ask(
         # Attach document to conversation
         doc_summary = chat_engine.attach_document(conv_id, str(temp_path), file.filename)
 
+        # If the user's message isn't a real question, auto-summarize the document
+        vague_phrases = ['this is the document', 'here is the document', 'here it is',
+                         'uploaded', 'here you go', 'check this', 'scan this',
+                         'analyze this document for compliance']
+        effective_message = message
+        if message.lower().strip().rstrip('.!') in vague_phrases or len(message.strip()) < 10:
+            effective_message = (
+                f"I just uploaded '{file.filename}'. "
+                "Please give me a comprehensive summary of this document and highlight "
+                "any compliance-relevant sections you find."
+            )
+
         # Process the user question
-        response_text = chat_engine.chat(conv_id, message)
+        response_text = chat_engine.chat(conv_id, effective_message)
 
         # Clean up temp file
         try:
@@ -242,10 +254,16 @@ async def llm_status():
     """Return current LLM provider status."""
     try:
         llm = chat_engine.llm
+        if settings.LLM_PROVIDER == "gemini":
+            model_name = settings.GEMINI_MODEL
+        elif settings.LLM_PROVIDER == "llama_cpp":
+            model_name = settings.LLAMA_MODEL_FILE
+        else:
+            model_name = settings.LLAMA_HF_MODEL
         return {
             "provider": settings.LLM_PROVIDER,
             "available": llm is not None,
-            "model": settings.LLAMA_MODEL_FILE if settings.LLM_PROVIDER == "llama_cpp" else settings.LLAMA_HF_MODEL,
+            "model": model_name,
         }
     except Exception:
         return {
