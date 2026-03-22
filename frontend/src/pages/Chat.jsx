@@ -1109,6 +1109,23 @@ export default function Chat({ onLogout }) {
     }
   }
 
+  const getApiErrorMessage = (error, fallback) => {
+    const status = error?.response?.status
+    const detail = error?.response?.data?.detail
+    const networkError = error?.code === 'ERR_NETWORK' || !error?.response
+
+    if (status === 401) {
+      return '⚠️ Session expired. Please sign out and log in again.'
+    }
+    if (typeof detail === 'string' && detail.trim()) {
+      return `⚠️ ${detail}`
+    }
+    if (networkError) {
+      return '⚠️ Could not reach backend. Make sure it is running at http://localhost:8000'
+    }
+    return fallback
+  }
+
   /* ── Send message ───────────────────── */
   const sendMessage = useCallback(async (text) => {
     const msg = (text || input).trim()
@@ -1131,8 +1148,12 @@ export default function Chat({ onLogout }) {
         setDocumentName(data.document_name)
         setConversations(prev => prev.map(c => c.id === convId ? { ...c, documentName: data.document_name, title: data.document_name } : c))
         setMessages(prev => [...prev, { role: 'assistant', content: data.message, timestamp: data.timestamp }])
-      } catch {
-        setMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Failed to upload. Make sure backend is running at http://localhost:8000', timestamp: new Date().toISOString() }])
+      } catch (error) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: getApiErrorMessage(error, '⚠️ Failed to upload document.'),
+          timestamp: new Date().toISOString(),
+        }])
       } finally { setLoading(false) }
       return
     }
@@ -1147,8 +1168,12 @@ export default function Chat({ onLogout }) {
       const data = await chatAPI.sendMessage(convId, msg)
       setActiveConvId(data.conversation_id)
       setMessages(prev => [...prev, { role: 'assistant', content: data.message, timestamp: data.timestamp }])
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Could not reach backend. Make sure it\'s running at http://localhost:8000', timestamp: new Date().toISOString() }])
+    } catch (error) {
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: getApiErrorMessage(error, '⚠️ Failed to process your message.'),
+        timestamp: new Date().toISOString(),
+      }])
     } finally { setLoading(false) }
   }, [input, loading, activeConvId, pendingFile, messages.length, temporaryChat])
 
@@ -1179,8 +1204,12 @@ export default function Chat({ onLogout }) {
       setDocumentName(data.document_name)
       setConversations(prev => prev.map(c => c.id === convId ? { ...c, documentName: data.document_name, title: data.document_name } : c))
       setMessages(prev => [...prev, { role: 'assistant', content: data.message, timestamp: data.timestamp }])
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Upload failed. Backend may be offline.', timestamp: new Date().toISOString() }])
+    } catch (error) {
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: getApiErrorMessage(error, '⚠️ Upload failed.'),
+        timestamp: new Date().toISOString(),
+      }])
     } finally { setLoading(false) }
   }
 

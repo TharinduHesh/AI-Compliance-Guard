@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "gemini"           # "gemini", "llama_cpp", "transformers", or "none" (rule-based fallback)
     
     # Gemini Configuration
-    GEMINI_API_KEY: str = ""               # Google Gemini API key
+    GEMINI_API_KEY: str = "AIzaSyCLzO79BacrsnZMUBMot_DaCZnVmoapCWk"               # Google Gemini API key
     GEMINI_MODEL: str = "gemini-2.5-flash"  # Gemini model name
     GEMINI_MAX_TOKENS: int = 4096
     GEMINI_TEMPERATURE: float = 0.3
