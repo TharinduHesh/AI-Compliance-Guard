@@ -178,6 +178,27 @@ export const adminAPI = {
     return response.data
   },
 
+  deleteChatTrackerData: async (targetType, value = null, deleteAll = false) => {
+    const response = await api.post('/admin/chat-tracker/delete', {
+      target_type: targetType,
+      value,
+      delete_all: deleteAll,
+    })
+    return response.data
+  },
+
+  getAutoDeleteSettings: async () => {
+    const response = await api.get('/admin/auto-delete-settings')
+    return response.data
+  },
+
+  updateAutoDeleteSettings: async (historyPeriod) => {
+    const response = await api.put('/admin/auto-delete-settings', {
+      history_period: historyPeriod,
+    })
+    return response.data
+  },
+
   deleteActivityLogs: async (period, actionFilter = null) => {
     const params = { period }
     if (actionFilter) params.action_filter = actionFilter

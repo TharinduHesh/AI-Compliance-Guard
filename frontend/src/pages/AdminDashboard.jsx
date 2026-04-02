@@ -195,6 +195,8 @@ export default function AdminDashboard() {
   const [filesLoading, setFilesLoading] = useState(false)
   const [analytics, setAnalytics] = useState(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
+  const [settingsSaving, setSettingsSaving] = useState(false)
+  const [monitorActionLoading, setMonitorActionLoading] = useState(false)
 
   /* Auth guard */
   const currentUser = (() => {
@@ -247,11 +249,22 @@ export default function AdminDashboard() {
     finally { setAnalyticsLoading(false) }
   }, [])
 
-  useEffect(() => {
-    if (isAdmin) { fetchUsers(); fetchActivities(); fetchHistory(); fetchUserDocs(); fetchUserFiles(); fetchAnalytics() }
-  }, [isAdmin, fetchUsers, fetchActivities, fetchHistory, fetchUserDocs, fetchUserFiles, fetchAnalytics])
+  const fetchAutoDeleteSettings = useCallback(async () => {
+    try {
+      const cfg = await adminAPI.getAutoDeleteSettings()
+      if (cfg?.history_period) {
+        setHistoryDeletePeriod(cfg.history_period)
+      }
+    } catch {
+      /* silent */
+    }
+  }, [])
 
-  const refreshAll = () => { fetchUsers(); fetchActivities(); fetchHistory(); fetchUserDocs(); fetchUserFiles(); fetchAnalytics() }
+  useEffect(() => {
+    if (isAdmin) { fetchUsers(); fetchActivities(); fetchHistory(); fetchUserDocs(); fetchUserFiles(); fetchAnalytics(); fetchAutoDeleteSettings() }
+  }, [isAdmin, fetchUsers, fetchActivities, fetchHistory, fetchUserDocs, fetchUserFiles, fetchAnalytics, fetchAutoDeleteSettings])
+
+  const refreshAll = () => { fetchUsers(); fetchActivities(); fetchHistory(); fetchUserDocs(); fetchUserFiles(); fetchAnalytics(); fetchAutoDeleteSettings() }
 
   /* ── Add user ──────────────────────────────────────────── */
   const handleOpenAdd = () => {
@@ -300,6 +313,33 @@ export default function AdminDashboard() {
       toast.error(e?.response?.data?.detail || 'Failed to delete history')
     } finally {
       setHistoryDeleting(false)
+    }
+  }
+
+  const handleSaveAutoDeleteSettings = async () => {
+    setSettingsSaving(true)
+    try {
+      await adminAPI.updateAutoDeleteSettings(historyDeletePeriod)
+      toast.success(`Auto delete duration updated to ${historyDeletePeriod.replace('_', ' ')}`)
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Failed to update auto delete settings')
+    } finally {
+      setSettingsSaving(false)
+    }
+  }
+
+  const handleDeleteMonitoringData = async (targetType, value = null, deleteAll = false, label = 'item') => {
+    setMonitorActionLoading(true)
+    try {
+      const res = await adminAPI.deleteChatTrackerData(targetType, value, deleteAll)
+      toast.success(`Deleted ${res.deleted || 0} chat records for ${label}`)
+      await fetchAnalytics()
+      await fetchHistory()
+      await fetchActivities()
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Failed to delete monitoring data')
+    } finally {
+      setMonitorActionLoading(false)
     }
   }
 
@@ -920,6 +960,34 @@ export default function AdminDashboard() {
                       Monitoring Dashboard
                     </Typography>
 
+                    <Paper elevation={0} sx={{ mb: 2, p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+                      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <Typography variant="body2" color="text.secondary" sx={{ minWidth: 190 }}>
+                          Auto delete time duration
+                        </Typography>
+                        <TextField
+                          select
+                          size="small"
+                          value={historyDeletePeriod}
+                          onChange={e => setHistoryDeletePeriod(e.target.value)}
+                          sx={{ minWidth: 180 }}
+                        >
+                          <MenuItem value="week">Once a week</MenuItem>
+                          <MenuItem value="month">Once a month</MenuItem>
+                          <MenuItem value="three_months">Three months</MenuItem>
+                        </TextField>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          onClick={handleSaveAutoDeleteSettings}
+                          disabled={settingsSaving}
+                          sx={{ textTransform: 'none' }}
+                        >
+                          {settingsSaving ? 'Saving...' : 'Save duration'}
+                        </Button>
+                      </Box>
+                    </Paper>
+
                     <Grid container spacing={2} sx={{ mb: 2 }}>
                       <Grid item xs={12} sm={6} md={4}>
                         <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
@@ -959,8 +1027,19 @@ export default function AdminDashboard() {
                     <Grid container spacing={2}>
                       <Grid item xs={12} md={6}>
                         <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
-                          <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+                          <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
                             <Typography variant="subtitle1" fontWeight={600}>Top Users by Chat Usage</Typography>
+                            <Button
+                              size="small"
+                              color="error"
+                              variant="outlined"
+                              startIcon={<DeleteIcon />}
+                              disabled={monitorActionLoading || topUsers.length === 0}
+                              onClick={() => handleDeleteMonitoringData('top_user', null, true, 'all top users')}
+                              sx={{ textTransform: 'none' }}
+                            >
+                              Clear All
+                            </Button>
                           </Box>
                           <Table size="small">
                             <TableHead>
@@ -969,11 +1048,12 @@ export default function AdminDashboard() {
                                 <TableCell sx={{ fontWeight: 700 }}>User</TableCell>
                                 <TableCell sx={{ fontWeight: 700 }}>Company</TableCell>
                                 <TableCell sx={{ fontWeight: 700 }}>Chats</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }} align="center">Delete</TableCell>
                               </TableRow>
                             </TableHead>
                             <TableBody>
                               {topUsers.length === 0 ? (
-                                <TableRow><TableCell colSpan={4} align="center"><Typography sx={{ py: 2 }} color="text.secondary">No data yet</Typography></TableCell></TableRow>
+                                <TableRow><TableCell colSpan={5} align="center"><Typography sx={{ py: 2 }} color="text.secondary">No data yet</Typography></TableCell></TableRow>
                               ) : (
                                 topUsers.map((u, idx) => (
                                   <TableRow key={`${u.user}-${idx}`} hover>
@@ -981,6 +1061,16 @@ export default function AdminDashboard() {
                                     <TableCell><strong>{u.user}</strong></TableCell>
                                     <TableCell>{u.company_name || '—'}</TableCell>
                                     <TableCell><Chip size="small" color="info" label={u.chats} /></TableCell>
+                                    <TableCell align="center">
+                                      <IconButton
+                                        color="error"
+                                        size="small"
+                                        disabled={monitorActionLoading}
+                                        onClick={() => handleDeleteMonitoringData('top_user', u.user, false, `user ${u.user}`)}
+                                      >
+                                        <DeleteIcon fontSize="small" />
+                                      </IconButton>
+                                    </TableCell>
                                   </TableRow>
                                 ))
                               )}
@@ -990,8 +1080,19 @@ export default function AdminDashboard() {
                       </Grid>
                       <Grid item xs={12} md={6}>
                         <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
-                          <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+                          <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
                             <Typography variant="subtitle1" fontWeight={600}>Most Searched Terms</Typography>
+                            <Button
+                              size="small"
+                              color="error"
+                              variant="outlined"
+                              startIcon={<DeleteIcon />}
+                              disabled={monitorActionLoading || topTerms.length === 0}
+                              onClick={() => handleDeleteMonitoringData('search_term', null, true, 'all searched terms')}
+                              sx={{ textTransform: 'none' }}
+                            >
+                              Clear All
+                            </Button>
                           </Box>
                           <Table size="small">
                             <TableHead>
@@ -999,17 +1100,28 @@ export default function AdminDashboard() {
                                 <TableCell sx={{ fontWeight: 700 }}>#</TableCell>
                                 <TableCell sx={{ fontWeight: 700 }}>Term</TableCell>
                                 <TableCell sx={{ fontWeight: 700 }}>Count</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }} align="center">Delete</TableCell>
                               </TableRow>
                             </TableHead>
                             <TableBody>
                               {topTerms.length === 0 ? (
-                                <TableRow><TableCell colSpan={3} align="center"><Typography sx={{ py: 2 }} color="text.secondary">No data yet</Typography></TableCell></TableRow>
+                                <TableRow><TableCell colSpan={4} align="center"><Typography sx={{ py: 2 }} color="text.secondary">No data yet</Typography></TableCell></TableRow>
                               ) : (
-                                topTerms.slice(0, 10).map((t, idx) => (
+                                topTerms.slice(0, 5).map((t, idx) => (
                                   <TableRow key={`${t.term}-${idx}`} hover>
                                     <TableCell>{idx + 1}</TableCell>
                                     <TableCell>{t.term}</TableCell>
                                     <TableCell>{t.count}</TableCell>
+                                    <TableCell align="center">
+                                      <IconButton
+                                        color="error"
+                                        size="small"
+                                        disabled={monitorActionLoading}
+                                        onClick={() => handleDeleteMonitoringData('search_term', t.term, false, `term ${t.term}`)}
+                                      >
+                                        <DeleteIcon fontSize="small" />
+                                      </IconButton>
+                                    </TableCell>
                                   </TableRow>
                                 ))
                               )}
@@ -1020,8 +1132,19 @@ export default function AdminDashboard() {
                     </Grid>
 
                     <Paper elevation={0} sx={{ mt: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
-                      <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+                      <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
                         <Typography variant="subtitle1" fontWeight={600}>Most Repeated Search Queries</Typography>
+                        <Button
+                          size="small"
+                          color="error"
+                          variant="outlined"
+                          startIcon={<DeleteIcon />}
+                          disabled={monitorActionLoading || topQueries.length === 0}
+                          onClick={() => handleDeleteMonitoringData('search_query', null, true, 'all repeated queries')}
+                          sx={{ textTransform: 'none' }}
+                        >
+                          Clear All
+                        </Button>
                       </Box>
                       <Table size="small">
                         <TableHead>
@@ -1029,17 +1152,28 @@ export default function AdminDashboard() {
                             <TableCell sx={{ fontWeight: 700 }}>#</TableCell>
                             <TableCell sx={{ fontWeight: 700 }}>Query</TableCell>
                             <TableCell sx={{ fontWeight: 700 }}>Count</TableCell>
+                            <TableCell sx={{ fontWeight: 700 }} align="center">Delete</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
                           {topQueries.length === 0 ? (
-                            <TableRow><TableCell colSpan={3} align="center"><Typography sx={{ py: 2 }} color="text.secondary">No data yet</Typography></TableCell></TableRow>
+                            <TableRow><TableCell colSpan={4} align="center"><Typography sx={{ py: 2 }} color="text.secondary">No data yet</Typography></TableCell></TableRow>
                           ) : (
-                            topQueries.slice(0, 10).map((q, idx) => (
+                            topQueries.slice(0, 5).map((q, idx) => (
                               <TableRow key={`${q.query}-${idx}`} hover>
                                 <TableCell>{idx + 1}</TableCell>
                                 <TableCell><Typography variant="body2" noWrap sx={{ maxWidth: 700 }}>{q.query}</Typography></TableCell>
                                 <TableCell>{q.count}</TableCell>
+                                <TableCell align="center">
+                                  <IconButton
+                                    color="error"
+                                    size="small"
+                                    disabled={monitorActionLoading}
+                                    onClick={() => handleDeleteMonitoringData('search_query', q.query, false, 'selected query')}
+                                  >
+                                    <DeleteIcon fontSize="small" />
+                                  </IconButton>
+                                </TableCell>
                               </TableRow>
                             ))
                           )}

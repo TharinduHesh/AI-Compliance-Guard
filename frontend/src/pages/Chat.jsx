@@ -44,7 +44,9 @@ function ThemeToggle({ isDark, onToggle, t }) {
 function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, collapsed, onClose, user, onLogout, t, isDark, onToggleTheme, onOpenSettings, onNavigate }) {
   const [searchOpen, setSearchOpen] = React.useState(false)
   const [searchQuery, setSearchQuery] = React.useState('')
+  const [quickMenuOpen, setQuickMenuOpen] = React.useState(false)
   const searchInputRef = React.useRef(null)
+  const isUserRole = (user?.role || 'user') === 'user'
 
   // Focus input when search opens
   React.useEffect(() => {
@@ -282,6 +284,7 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, collapsed
       <div style={{
         padding: '12px', borderTop: `1px solid ${t.border}`,
         display: 'flex', alignItems: 'center', gap: 10,
+        position: 'relative',
       }}>
         <div style={{
           width: 32, height: 32, borderRadius: '50%',
@@ -298,6 +301,89 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, collapsed
           </div>
           <div style={{ color: t.textMuted, fontSize: 11 }}>{user?.company_id}</div>
         </div>
+
+        {isUserRole && (
+          <>
+            <button
+              onClick={() => setQuickMenuOpen(prev => !prev)}
+              title="Quick pages"
+              style={{
+                background: 'none',
+                border: 'none',
+                color: t.textMuted,
+                cursor: 'pointer',
+                padding: 6,
+                borderRadius: 8,
+                display: 'flex',
+                alignItems: 'center',
+                transition: 'color .15s, background .15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.color = t.text; e.currentTarget.style.backgroundColor = t.bgHover }}
+              onMouseLeave={e => { e.currentTarget.style.color = t.textMuted; e.currentTarget.style.backgroundColor = 'transparent' }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="8.5" cy="7" r="4"/>
+                <line x1="20" y1="8" x2="20" y2="14"/>
+                <line x1="17" y1="11" x2="23" y2="11"/>
+              </svg>
+            </button>
+
+            {quickMenuOpen && (
+              <div style={{
+                position: 'absolute',
+                right: 52,
+                bottom: 52,
+                backgroundColor: t.bgCard,
+                border: `1px solid ${t.borderLight}`,
+                borderRadius: 10,
+                minWidth: 170,
+                boxShadow: isDark
+                  ? '0 8px 22px rgba(0,0,0,.45)'
+                  : '0 8px 22px rgba(15,23,42,.16)',
+                overflow: 'hidden',
+                zIndex: 30,
+              }}>
+                <button
+                  onClick={() => { setQuickMenuOpen(false); onNavigate('/frameworks') }}
+                  style={{
+                    width: '100%',
+                    textAlign: 'left',
+                    background: 'transparent',
+                    border: 'none',
+                    color: t.text,
+                    padding: '10px 12px',
+                    fontSize: 13,
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.backgroundColor = t.bgHover}
+                  onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                >
+                  Frameworks
+                </button>
+                <button
+                  onClick={() => { setQuickMenuOpen(false); onNavigate('/about') }}
+                  style={{
+                    width: '100%',
+                    textAlign: 'left',
+                    background: 'transparent',
+                    border: 'none',
+                    color: t.text,
+                    padding: '10px 12px',
+                    fontSize: 13,
+                    cursor: 'pointer',
+                    borderTop: `1px solid ${t.borderLight}`,
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.backgroundColor = t.bgHover}
+                  onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                >
+                  About
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
         <button
           onClick={onLogout}
           title="Sign out"
@@ -403,7 +489,10 @@ function TypingIndicator({ t }) {
 }
 
 /* ── Welcome screen (centered like ChatGPT) ───────────────────── */
-function WelcomeScreen({ onSend, t }) {
+function WelcomeScreen({ onSend, t, isDark }) {
+  const logoSrc = isDark ? '/Logo.png' : '/IMAGE%204.png'
+  const welcomeLogoSize = isDark ? 240 : 320
+  const logoBottomGap = isDark ? 0 : -64
   const suggestions = [
     { icon: '📋', title: 'What is ISO 27001?', desc: 'Information security standards' },
     { icon: '🛡️', title: 'Explain the CIA triad', desc: 'Confidentiality, Integrity, Availability' },
@@ -416,9 +505,13 @@ function WelcomeScreen({ onSend, t }) {
       display: 'flex', flexDirection: 'column', alignItems: 'center',
       justifyContent: 'center', flex: 1, padding: 40,
     }}>
-      <img src="/Logo.png" alt="AI Compliance Guard" style={{
-        width: 200, height: 200, borderRadius: 24,
-        marginBottom: 0, objectFit: 'contain',
+      <img src={logoSrc} alt="AI Compliance Guard" style={{
+        width: welcomeLogoSize, height: welcomeLogoSize, borderRadius: 24,
+        marginBottom: logoBottomGap, objectFit: 'contain',
+        backgroundColor: 'transparent',
+        border: 'none',
+        boxShadow: 'none',
+        padding: 0,
       }} />
 
       <h1 style={{
@@ -928,6 +1021,8 @@ function ActionChips({ onSend, hasDoc, t }) {
    ================================================================ */
 export default function Chat({ onLogout }) {
   const { theme: t, isDark, toggle: toggleTheme } = useTheme()
+  const logoSrc = isDark ? '/Logo.png' : '/IMAGE%204.png'
+  const topBarLogoSize = isDark ? 28 : 40
   const navigate = useNavigate()
 
   const [conversations, setConversations] = useState([])
@@ -1369,7 +1464,20 @@ export default function Chat({ onLogout }) {
             )}
           </button>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <img src="/Logo.png" alt="Logo" style={{ width: 24, height: 24, borderRadius: 4, objectFit: 'contain' }} />
+            <img
+              src={logoSrc}
+              alt="Logo"
+              style={{
+                width: topBarLogoSize,
+                height: topBarLogoSize,
+                borderRadius: 4,
+                objectFit: 'contain',
+                backgroundColor: 'transparent',
+                border: 'none',
+                boxShadow: 'none',
+                padding: 0,
+              }}
+            />
             <span style={{ color: t.text, fontWeight: 600, fontSize: 15 }}>AI Compliance Guard</span>
             {documentName && <span style={{ color: t.accentLight, fontSize: 13, marginLeft: 4 }}>📄 {documentName}</span>}
             {temporaryChat && (
@@ -1500,7 +1608,7 @@ export default function Chat({ onLogout }) {
           flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column',
         }}>
           {isEmpty ? (
-            <WelcomeScreen onSend={sendMessage} t={t} />
+            <WelcomeScreen onSend={sendMessage} t={t} isDark={isDark} />
           ) : (
             <>
               {messages.map((m, i) => (

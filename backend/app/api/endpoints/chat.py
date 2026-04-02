@@ -7,8 +7,8 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from typing import Optional, List
 import logging
 import secrets
-import shutil
 import os
+import re
 from pathlib import Path
 from datetime import datetime
 
@@ -25,6 +25,22 @@ from fastapi import Depends
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _sanitize_path_part(value: str, fallback: str = "item") -> str:
+    raw = (value or "").strip()
+    raw = Path(raw).name
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", raw)
+    cleaned = cleaned.strip("._-")
+    return cleaned[:120] if cleaned else fallback
+
+
+def _safe_join(base_dir: Path, *parts: str) -> Path:
+    base = base_dir.resolve()
+    target = (base / Path(*parts)).resolve()
+    if target != base and not str(target).startswith(str(base) + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    return target
 
 
 @router.post("/message", response_model=ChatMessageResponse)
@@ -72,13 +88,16 @@ async def upload_and_ask(
     user_id = token_data.get("sub", "unknown")
     try:
         conv_id = conversation_id or secrets.token_urlsafe(16)
+        safe_conv_id = _sanitize_path_part(conv_id, "conversation")
+        safe_user_id = _sanitize_path_part(user_id, "user")
+        safe_filename = _sanitize_path_part(file.filename, "document")
 
         # Ensure conversation exists
         if chat_engine.get_conversation(conv_id) is None:
             chat_engine.create_conversation(conv_id)
 
         # Validate file
-        ext = Path(file.filename).suffix.lower()
+        ext = Path(safe_filename).suffix.lower()
         if ext not in ('.pdf', '.docx'):
             raise HTTPException(status_code=400, detail="Only PDF and DOCX files are supported.")
 
@@ -89,20 +108,20 @@ async def upload_and_ask(
         # Save temp file for processing
         temp_dir = Path(settings.TEMP_UPLOAD_DIR)
         temp_dir.mkdir(parents=True, exist_ok=True)
-        temp_path = temp_dir / f"{conv_id}_{file.filename}"
+        temp_path = _safe_join(temp_dir, f"{safe_conv_id}_{safe_filename}")
         with open(temp_path, 'wb') as f:
             f.write(file_data)
 
         # Save permanent copy for admin viewing
-        uploads_dir = Path(settings.USER_UPLOADS_DIR) / user_id
+        uploads_dir = _safe_join(Path(settings.USER_UPLOADS_DIR), safe_user_id)
         uploads_dir.mkdir(parents=True, exist_ok=True)
         ts_prefix = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        perm_path = uploads_dir / f"{ts_prefix}_{file.filename}"
+        perm_path = _safe_join(uploads_dir, f"{ts_prefix}_{safe_filename}")
         with open(perm_path, 'wb') as f:
             f.write(file_data)
 
         # Attach document to conversation
-        doc_summary = chat_engine.attach_document(conv_id, str(temp_path), file.filename)
+        doc_summary = chat_engine.attach_document(conv_id, str(temp_path), safe_filename)
 
         # If the user's message isn't a real question, auto-summarize the document
         vague_phrases = ['this is the document', 'here is the document', 'here it is',
@@ -111,7 +130,7 @@ async def upload_and_ask(
         effective_message = message
         if message.lower().strip().rstrip('.!') in vague_phrases or len(message.strip()) < 10:
             effective_message = (
-                f"I just uploaded '{file.filename}'. "
+                f"I just uploaded '{safe_filename}'. "
                 "Please give me a comprehensive summary of this document and highlight "
                 "any compliance-relevant sections you find."
             )
@@ -132,7 +151,7 @@ async def upload_and_ask(
             conversation_id=conv_id,
             message=response_text,
             role="assistant",
-            document_name=file.filename,
+            document_name=safe_filename,
             clauses_extracted=doc_summary.get('clauses_extracted', 0),
             timestamp=datetime.utcnow().isoformat(),
         )
@@ -156,11 +175,14 @@ async def upload_document_to_chat(
     user_id = token_data.get("sub", "unknown")
     try:
         conv_id = conversation_id or secrets.token_urlsafe(16)
+        safe_conv_id = _sanitize_path_part(conv_id, "conversation")
+        safe_user_id = _sanitize_path_part(user_id, "user")
+        safe_filename = _sanitize_path_part(file.filename, "document")
 
         if chat_engine.get_conversation(conv_id) is None:
             chat_engine.create_conversation(conv_id)
 
-        ext = Path(file.filename).suffix.lower()
+        ext = Path(safe_filename).suffix.lower()
         if ext not in ('.pdf', '.docx'):
             raise HTTPException(status_code=400, detail="Only PDF and DOCX files are supported.")
 
@@ -168,19 +190,19 @@ async def upload_document_to_chat(
 
         temp_dir = Path(settings.TEMP_UPLOAD_DIR)
         temp_dir.mkdir(parents=True, exist_ok=True)
-        temp_path = temp_dir / f"{conv_id}_{file.filename}"
+        temp_path = _safe_join(temp_dir, f"{safe_conv_id}_{safe_filename}")
         with open(temp_path, 'wb') as f:
             f.write(file_data)
 
         # Save permanent copy for admin viewing
-        uploads_dir = Path(settings.USER_UPLOADS_DIR) / user_id
+        uploads_dir = _safe_join(Path(settings.USER_UPLOADS_DIR), safe_user_id)
         uploads_dir.mkdir(parents=True, exist_ok=True)
         ts_prefix = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        perm_path = uploads_dir / f"{ts_prefix}_{file.filename}"
+        perm_path = _safe_join(uploads_dir, f"{ts_prefix}_{safe_filename}")
         with open(perm_path, 'wb') as f:
             f.write(file_data)
 
-        doc_summary = chat_engine.attach_document(conv_id, str(temp_path), file.filename)
+        doc_summary = chat_engine.attach_document(conv_id, str(temp_path), safe_filename)
 
         # Clean up temp file
         try:
@@ -195,7 +217,7 @@ async def upload_document_to_chat(
 
         return {
             "conversation_id": conv_id,
-            "document_name": file.filename,
+            "document_name": safe_filename,
             "clauses_extracted": doc_summary.get('clauses_extracted', 0),
             "word_count": doc_summary.get('word_count', 0),
             "message": welcome,

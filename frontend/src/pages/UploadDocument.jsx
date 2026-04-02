@@ -386,6 +386,11 @@ saveToHistory(mockResults)
 
   const saveToHistory = (analysisResults) => {
     try {
+      const currentUser = (() => {
+        try { return JSON.parse(localStorage.getItem('user') || '{}') } catch { return {} }
+      })()
+      const historyKey = `analysisHistory:${currentUser.company_id || 'anonymous'}`
+
       const historyItem = {
         analysisId: analysisResults.analysis_id,
         fileName: analysisResults.file_name,
@@ -397,9 +402,9 @@ saveToHistory(mockResults)
         results: analysisResults,
       }
 
-      const existingHistory = JSON.parse(localStorage.getItem('analysisHistory') || '[]')
+      const existingHistory = JSON.parse(localStorage.getItem(historyKey) || '[]')
       const updatedHistory = [historyItem, ...existingHistory].slice(0, 50) // Keep last 50 analyses
-      localStorage.setItem('analysisHistory', JSON.stringify(updatedHistory))
+      localStorage.setItem(historyKey, JSON.stringify(updatedHistory))
     } catch (error) {
       console.error('Error saving to history:', error)
     }

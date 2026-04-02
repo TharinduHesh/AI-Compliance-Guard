@@ -41,7 +41,7 @@ function App() {
   const userRole = (() => {
     try { return JSON.parse(localStorage.getItem('user') || '{}').role } catch { return 'user' }
   })()
-  const defaultRoute = userRole === 'admin' ? '/admin' : '/chat'
+  const defaultRoute = userRole === 'admin' ? '/admin' : '/dashboard'
   const isAdmin = userRole === 'admin'
 
   return (
@@ -49,11 +49,11 @@ function App() {
       <Routes>
         <Route path="/" element={<Navigate to={defaultRoute} replace />} />
 
-        {/* Users only get the full-screen Chat page (no navbar) */}
+        {/* Chat route (users only) */}
         <Route path="/chat" element={
           isAdmin
             ? <Navigate to="/admin" replace />
-            : <Chat onLogout={handleLogout} />
+            : <Layout onLogout={handleLogout}><Chat onLogout={handleLogout} /></Layout>
         } />
 
         {/* Shared authenticated pages — wrapped in Layout */}

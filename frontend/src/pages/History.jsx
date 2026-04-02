@@ -35,6 +35,14 @@ function History() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [selectedItem, setSelectedItem] = useState(null)
   const navigate = useNavigate()
+  const historyKey = (() => {
+    try {
+      const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
+      return `analysisHistory:${currentUser.company_id || 'anonymous'}`
+    } catch {
+      return 'analysisHistory:anonymous'
+    }
+  })()
 
   useEffect(() => {
     loadHistory()
@@ -57,9 +65,15 @@ function History() {
 
   const loadHistory = () => {
     try {
-      const savedHistory = localStorage.getItem('analysisHistory')
+      const savedHistory = localStorage.getItem(historyKey)
+      const legacyHistory = localStorage.getItem('analysisHistory')
       if (savedHistory) {
         const parsed = JSON.parse(savedHistory)
+        setHistory(parsed)
+        setFilteredHistory(parsed)
+      } else if (legacyHistory) {
+        // Backward compatibility for previously stored data
+        const parsed = JSON.parse(legacyHistory)
         setHistory(parsed)
         setFilteredHistory(parsed)
       }
@@ -80,7 +94,7 @@ function History() {
   const handleDeleteConfirm = () => {
     if (selectedItem) {
       const updatedHistory = history.filter((item) => item.analysisId !== selectedItem.analysisId)
-      localStorage.setItem('analysisHistory', JSON.stringify(updatedHistory))
+      localStorage.setItem(historyKey, JSON.stringify(updatedHistory))
       setHistory(updatedHistory)
       setFilteredHistory(updatedHistory)
       setDeleteDialogOpen(false)
@@ -90,7 +104,7 @@ function History() {
 
   const handleClearAll = () => {
     if (window.confirm('Are you sure you want to clear all history? This action cannot be undone.')) {
-      localStorage.removeItem('analysisHistory')
+      localStorage.removeItem(historyKey)
       setHistory([])
       setFilteredHistory([])
     }

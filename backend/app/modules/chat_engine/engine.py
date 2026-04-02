@@ -286,6 +286,10 @@ class ComplianceChatEngine:
         if self._is_greeting(msg_lower):
             return self._greeting_response(conv)
 
+        # Scope guard: do not answer questions outside AIComplianceGuard domain.
+        if self._is_out_of_scope(msg_lower):
+            return self._out_of_scope_response()
+
         # No document uploaded yet – try LLM for any question, fallback to guide
         if not conv.get('document_clauses'):
             if self.llm is not None:
@@ -384,6 +388,42 @@ class ComplianceChatEngine:
                'why is', 'tell me about', 'what are']
         return any(k in msg for k in kw)
 
+    def _is_out_of_scope(self, msg: str) -> bool:
+        """
+        Return True for prompts outside AIComplianceGuard scope.
+        Scope includes compliance, security policies, supported frameworks,
+        document analysis, CIA, audit risk, and platform feature usage.
+        """
+        in_scope_keywords = [
+            'compliance', 'policy', 'policies', 'control', 'controls',
+            'iso', 'iso27001', 'iso 27001', 'iso9001', 'iso 9001',
+            'nist', 'gdpr', 'pdpa', 'framework', 'standard',
+            'cia', 'confidentiality', 'integrity', 'availability',
+            'audit', 'risk', 'readiness', 'gap', 'gaps', 'missing',
+            'document', 'pdf', 'docx', 'clause', 'clauses',
+            'analysis', 'analyze', 'recommendation', 'improve',
+            'aicomplianceguard', 'ai compliance guard', 'dashboard', 'chatbot'
+        ]
+        if any(k in msg for k in in_scope_keywords):
+            return False
+
+        out_of_scope_keywords = [
+            'movie', 'music', 'song', 'sports', 'football', 'cricket', 'basketball',
+            'weather', 'recipe', 'cooking', 'travel', 'gaming', 'game',
+            'crypto', 'bitcoin', 'stock price', 'celebrity', 'politics',
+            'math homework', 'chemistry', 'biology', 'physics',
+            'joke', 'poem', 'story', 'translate', 'horoscope'
+        ]
+        return any(k in msg for k in out_of_scope_keywords)
+
+    def _out_of_scope_response(self) -> str:
+        return (
+            "I can only help with AIComplianceGuard topics such as compliance document analysis, "
+            "ISO 27001/ISO 9001/NIST/GDPR/PDPA checks, CIA analysis, audit risk readiness, "
+            "and policy improvement recommendations.\n\n"
+            "Please ask a compliance-related question within these areas."
+        )
+
     def _detect_framework(self, msg: str) -> Optional[str]:
         if 'iso 27001' in msg or 'iso27001' in msg:
             return 'iso27001'
@@ -418,7 +458,7 @@ class ComplianceChatEngine:
             "ISO 27001, ISO 9001, NIST CSF, and GDPR/PDPA.\n\n"
             "**To get started**, upload a PDF or DOCX document using the attachment button, "
             "then ask me about compliance gaps, weak policies, or improvements.\n\n"
-            "You can also ask me general compliance questions anytime!"
+            "I only answer questions related to AIComplianceGuard and compliance analysis scope."
         )
 
     def _no_document_response(self) -> str:
@@ -430,7 +470,8 @@ class ComplianceChatEngine:
             "In the meantime, you can ask me general compliance questions like:\n"
             "• \"What is ISO 27001?\"\n"
             "• \"Explain the CIA triad\"\n"
-            "• \"What is GDPR?\""
+            "• \"What is GDPR?\"\n\n"
+            "I do not answer non-compliance questions outside AIComplianceGuard scope."
         )
 
     def _document_summary_response(self, conv: Dict) -> str:

@@ -14,6 +14,7 @@ import {
   Security as SecurityIcon,
   TrendingUp as TrendIcon,
   Description as DocIcon,
+  Info as InfoIcon,
   ArrowForward as ArrowIcon,
   DarkMode as DarkModeIcon,
   LightMode as LightModeIcon,
@@ -93,7 +94,11 @@ export default function UserDashboard() {
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('analysisHistory')
+      const currentUser = (() => {
+        try { return JSON.parse(localStorage.getItem('user') || '{}') } catch { return {} }
+      })()
+      const historyKey = `analysisHistory:${currentUser.company_id || 'anonymous'}`
+      const saved = localStorage.getItem(historyKey) || localStorage.getItem('analysisHistory')
       if (saved) setHistory(JSON.parse(saved))
     } catch { /* ignore */ }
   }, [])
@@ -123,6 +128,7 @@ export default function UserDashboard() {
     { icon: <UploadIcon />, title: 'Upload Document', desc: 'Analyze a new document', path: '/upload', color: '#0891b2' },
     { icon: <HistoryIcon />, title: 'History', desc: 'View past analyses', path: '/history', color: '#d97706' },
     { icon: <DocIcon />, title: 'Frameworks', desc: 'Browse supported frameworks', path: '/frameworks', color: '#16a34a' },
+    { icon: <InfoIcon />, title: 'About', desc: 'Learn about AIComplianceGuard', path: '/about', color: '#7c3aed' },
   ]
 
   const getRiskColor = (level) => {

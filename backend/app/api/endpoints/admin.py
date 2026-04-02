@@ -30,6 +30,47 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+ALLOWED_RETENTION_PERIODS = {"week", "month", "three_months"}
+_auto_delete_config = {
+    "history_period": "month",
+}
+
+
+def _extract_chat_query(detail: str) -> str:
+    raw = (detail or "").strip()
+    if raw.lower().startswith("chat message:"):
+        return raw.split(":", 1)[1].strip()
+    return raw
+
+
+def _normalize_query(query: str) -> str:
+    return re.sub(r"\s+", " ", (query or "").strip().lower())
+
+
+def _is_term_in_query(query: str, term: str) -> bool:
+    if not term:
+        return False
+    normalized_query = _normalize_query(query)
+    words = re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", normalized_query)
+    return term.lower() in words
+
+
+def _sanitize_path_part(value: str, fallback: str = "item") -> str:
+    raw = (value or "").strip()
+    raw = Path(raw).name
+    cleaned = re.sub(r"[^A-Za-z0-9._@-]", "_", raw)
+    cleaned = cleaned.strip("._-")
+    return cleaned[:120] if cleaned else fallback
+
+
+def _safe_join(base_dir: Path, *parts: str) -> Path:
+    base = base_dir.resolve()
+    target = (base / Path(*parts)).resolve()
+    if target != base and not str(target).startswith(str(base) + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    return target
+
+
 # ── Schemas ──────────────────────────────────────────────────
 class CreateUserRequest(BaseModel):
     company_id: str = Field(..., min_length=3, max_length=50)
@@ -44,6 +85,16 @@ class UserOut(BaseModel):
     role: str = "user"
     created_at: Optional[str] = None
     last_login: Optional[str] = None
+
+
+class AutoDeleteConfigRequest(BaseModel):
+    history_period: str = Field(..., pattern="^(week|month|three_months)$")
+
+
+class ChatTrackerDeleteRequest(BaseModel):
+    target_type: str = Field(..., pattern="^(top_user|search_term|search_query)$")
+    value: Optional[str] = None
+    delete_all: bool = False
 
 
 # ── User Management (Admin only) ────────────────────────────
@@ -284,7 +335,10 @@ async def download_user_file(
     if not user or not filename:
         raise HTTPException(status_code=400, detail="user and filename are required")
 
-    file_path = Path(settings.USER_UPLOADS_DIR) / user / filename
+    safe_user = _sanitize_path_part(user, "user")
+    safe_filename = _sanitize_path_part(filename, "file")
+    uploads_root = Path(settings.USER_UPLOADS_DIR)
+    file_path = _safe_join(uploads_root, safe_user, safe_filename)
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -295,13 +349,13 @@ async def download_user_file(
     return FileResponse(
         path=str(file_path),
         media_type=media_type,
-        filename=filename,
+        filename=safe_filename,
     )
 
 
 # ── System endpoints (unchanged) ────────────────────────────
 @router.get("/stats")
-async def get_system_stats(token_data: dict = Depends(verify_token)):
+async def get_system_stats(token_data: dict = Depends(verify_admin)):
     """Get system statistics"""
     return {
         "total_analyses": 0,
@@ -312,7 +366,7 @@ async def get_system_stats(token_data: dict = Depends(verify_token)):
 
 
 @router.post("/cleanup")
-async def cleanup_temp_files(token_data: dict = Depends(verify_token)):
+async def cleanup_temp_files(token_data: dict = Depends(verify_admin)):
     """Cleanup temporary files"""
     try:
         cleaned_count = security_layer.cleanup_temp_files()
@@ -323,7 +377,7 @@ async def cleanup_temp_files(token_data: dict = Depends(verify_token)):
 
 
 @router.get("/system-health")
-async def get_system_health():
+async def get_system_health(token_data: dict = Depends(verify_admin)):
     """Get detailed system health status"""
     firebase_stats = firebase_storage.get_storage_stats()
     return {
@@ -345,7 +399,7 @@ async def get_system_health():
 
 
 @router.get("/firebase-stats")
-async def get_firebase_stats(token_data: dict = Depends(verify_token)):
+async def get_firebase_stats(token_data: dict = Depends(verify_admin)):
     """Get Firebase storage statistics"""
     try:
         stats = firebase_storage.get_storage_stats()
@@ -356,7 +410,7 @@ async def get_firebase_stats(token_data: dict = Depends(verify_token)):
 
 
 @router.post("/firebase-cleanup")
-async def cleanup_firebase_metadata(token_data: dict = Depends(verify_token)):
+async def cleanup_firebase_metadata(token_data: dict = Depends(verify_admin)):
     """Clean up expired metadata from Firebase"""
     try:
         deleted_count = firebase_storage.cleanup_expired_metadata()
@@ -364,6 +418,33 @@ async def cleanup_firebase_metadata(token_data: dict = Depends(verify_token)):
     except Exception as e:
         logger.error(f"Firebase cleanup error: {str(e)}")
         raise HTTPException(status_code=500, detail="Firebase cleanup failed")
+
+
+@router.get("/auto-delete-settings")
+async def get_auto_delete_settings(token_data: dict = Depends(verify_admin)):
+    """Get current admin-configured auto-delete settings."""
+    return dict(_auto_delete_config)
+
+
+@router.put("/auto-delete-settings")
+async def update_auto_delete_settings(
+    body: AutoDeleteConfigRequest,
+    token_data: dict = Depends(verify_admin),
+):
+    """Update admin-configured auto-delete period for history cleanup."""
+    if body.history_period not in ALLOWED_RETENTION_PERIODS:
+        raise HTTPException(status_code=400, detail="Invalid period. Use: week, month, or three_months")
+
+    _auto_delete_config["history_period"] = body.history_period
+    record_activity(
+        token_data.get("sub", "admin"),
+        "update_auto_delete",
+        f"Updated auto-delete period to {body.history_period}",
+    )
+    return {
+        "message": "Auto-delete settings updated",
+        "history_period": body.history_period,
+    }
 
 
 # ── Advanced Analytics ───────────────────────────────────────
@@ -456,8 +537,8 @@ async def get_analytics(token_data: dict = Depends(verify_admin)):
                 term_counts[w] = term_counts.get(w, 0) + 1
 
     top_chat_users = sorted(chat_user_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    top_queries = sorted(query_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    top_terms = sorted(term_counts.items(), key=lambda x: x[1], reverse=True)[:15]
+    top_queries = sorted(query_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+    top_terms = sorted(term_counts.items(), key=lambda x: x[1], reverse=True)[:5]
 
     top_chat_users_enriched = []
     for uid, chats in top_chat_users:
@@ -486,10 +567,71 @@ async def get_analytics(token_data: dict = Depends(verify_admin)):
     }
 
 
+@router.post("/chat-tracker/delete")
+async def delete_chat_tracker_data(
+    body: ChatTrackerDeleteRequest,
+    token_data: dict = Depends(verify_admin),
+):
+    """
+    Delete chat analytics source records from activity logs.
+    target_type: top_user | search_term | search_query
+    value: required unless delete_all is true
+    """
+    if not body.delete_all and not (body.value or "").strip():
+        raise HTTPException(status_code=400, detail="value is required when delete_all is false")
+
+    value = (body.value or "").strip()
+    value_norm = _normalize_query(value)
+    deleted = 0
+    kept = []
+
+    for entry in _activity_log:
+        if entry.get("action") != "chat":
+            kept.append(entry)
+            continue
+
+        uid = entry.get("user", "")
+        query = _extract_chat_query(entry.get("detail", ""))
+        query_norm = _normalize_query(query)
+
+        should_delete = False
+        if body.target_type == "top_user":
+            should_delete = body.delete_all or (uid == value)
+        elif body.target_type == "search_term":
+            should_delete = body.delete_all or _is_term_in_query(query_norm, value_norm)
+        elif body.target_type == "search_query":
+            should_delete = body.delete_all or (query_norm == value_norm)
+
+        if should_delete:
+            deleted += 1
+        else:
+            kept.append(entry)
+
+    _activity_log.clear()
+    _activity_log.extend(kept)
+
+    record_activity(
+        token_data.get("sub", "admin"),
+        "delete_chat_tracker",
+        (
+            f"Deleted {deleted} chat entries "
+            f"(type={body.target_type}, value={value or 'all'}, delete_all={body.delete_all})"
+        ),
+    )
+
+    return {
+        "deleted": deleted,
+        "remaining": len(_activity_log),
+        "target_type": body.target_type,
+        "value": value or "all",
+        "delete_all": body.delete_all,
+    }
+
+
 # ── Delete Activity Logs by Period ───────────────────────────
 @router.delete("/activity-logs")
 async def delete_activity_logs(
-    period: str = "week",   # week | month | three_months | year
+    period: Optional[str] = None,   # week | month | three_months
     action_filter: Optional[str] = None,  # login | upload | analysis | chat | None (all)
     token_data: dict = Depends(verify_admin),
 ):
@@ -503,8 +645,10 @@ async def delete_activity_logs(
         "week": timedelta(weeks=1),
         "month": timedelta(days=30),
         "three_months": timedelta(days=90),
-        "year": timedelta(days=365),
     }
+    if period is None:
+        period = _auto_delete_config.get("history_period", "month")
+
     if period not in period_map:
         raise HTTPException(status_code=400, detail=f"Invalid period. Use: {list(period_map.keys())}")
 

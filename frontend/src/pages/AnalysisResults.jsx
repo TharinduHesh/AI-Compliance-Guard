@@ -49,7 +49,21 @@ const CIA_COLORS = ['#6366f1', '#22c55e', '#f59e0b']
 function AnalysisResults() {
   const location = useLocation()
   const { analysisId } = useParams()
-  const results = location.state?.results
+  const results = (() => {
+    if (location.state?.results) return location.state.results
+
+    try {
+      const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
+      const historyKey = `analysisHistory:${currentUser.company_id || 'anonymous'}`
+      const ownHistory = JSON.parse(localStorage.getItem(historyKey) || '[]')
+      const legacyHistory = JSON.parse(localStorage.getItem('analysisHistory') || '[]')
+      const combined = [...ownHistory, ...legacyHistory]
+      const item = combined.find(h => String(h.analysisId) === String(analysisId))
+      return item?.results || null
+    } catch {
+      return null
+    }
+  })()
 
   if (!results) {
     return (
