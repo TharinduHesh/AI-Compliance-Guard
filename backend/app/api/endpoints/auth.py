@@ -127,6 +127,60 @@ ADMIN_EMAIL = "Admin@ACG.lk"
 ADMIN_PASSWORD = "@Admin123"
 
 
+def _normalize_company_id(value: str) -> str:
+    """
+    Canonicalise company identifiers for matching.
+    - Emails are matched case-insensitively.
+    - Non-email IDs are matched case-insensitively and treat '_' == '-'.
+    """
+    raw = (value or "").strip()
+    if "@" in raw:
+        return raw.lower()
+    return raw.replace("_", "-").upper()
+
+
+def _candidate_company_ids(company_id: str) -> list[str]:
+    """Build possible ID variants to improve lookup hit-rate."""
+    raw = (company_id or "").strip()
+    if not raw:
+        return []
+
+    variants = [raw]
+    if "@" not in raw:
+        variants.extend([
+            raw.replace("_", "-"),
+            raw.replace("-", "_"),
+            raw.upper(),
+            raw.lower(),
+            raw.replace("_", "-").upper(),
+            raw.replace("_", "-").lower(),
+        ])
+    else:
+        variants.extend([raw.lower(), raw.upper()])
+
+    # Keep order, remove duplicates
+    seen = set()
+    ordered = []
+    for item in variants:
+        if item and item not in seen:
+            ordered.append(item)
+            seen.add(item)
+    return ordered
+
+
+def _resolve_user_key(company_id: str) -> Optional[str]:
+    """Find the concrete key used in _users for a logical company ID."""
+    # Fast path: direct match (exact key)
+    if company_id in _users:
+        return company_id
+
+    wanted = _normalize_company_id(company_id)
+    for key in _users.keys():
+        if _normalize_company_id(key) == wanted:
+            return key
+    return None
+
+
 def _seed_admin():
     """Ensure admin account exists in memory + Firebase"""
     if ADMIN_EMAIL not in _users:
@@ -166,12 +220,17 @@ except Exception:
 
 def get_user(company_id: str) -> Optional[dict]:
     """Get user from memory (primary) or Firebase (fallback)"""
-    if company_id in _users:
-        return _users[company_id]
-    fb = _fb_get_user(company_id)
-    if fb:
-        _users[company_id] = fb
-        return fb
+    resolved = _resolve_user_key(company_id)
+    if resolved:
+        return _users[resolved]
+
+    # Try multiple variants against Firebase and cache with the hit key.
+    for candidate in _candidate_company_ids(company_id):
+        fb = _fb_get_user(candidate)
+        if fb:
+            _users[candidate] = fb
+            return fb
+
     return None
 
 
@@ -204,6 +263,13 @@ def verify_admin(token_data: dict = Depends(verify_token)) -> dict:
     return token_data
 
 
+def verify_user(token_data: dict = Depends(verify_token)) -> dict:
+    """Verify the caller is a non-admin user"""
+    if token_data.get("role") != "user":
+        raise HTTPException(status_code=403, detail="User access required")
+    return token_data
+
+
 # ── Login ────────────────────────────────────────────────────
 @router.post("/login", response_model=TokenResponse)
 async def login(data: UserLogin):
@@ -211,22 +277,26 @@ async def login(data: UserLogin):
     Login with Company ID and password.
     Returns a JWT token on success.
     """
-    cid = data.company_id.strip()
-    user = get_user(cid)
+    cid_input = data.company_id.strip()
+    resolved_cid = _resolve_user_key(cid_input) or cid_input
+    user = get_user(cid_input)
+
+    # Re-resolve after fallback/cache paths in get_user.
+    resolved_cid = _resolve_user_key(cid_input) or resolved_cid
 
     if not user or data.password != user.get("password", ""):
         raise HTTPException(status_code=401, detail="Invalid Company ID or password")
 
     role = user.get("role", "user")
-    logger.info(f"Login success: {cid} (role={role})")
+    logger.info(f"Login success: {resolved_cid} (role={role})")
 
     # Track login activity & update last_login
-    record_activity(cid, "login", f"Logged in (role={role})")
-    _users[cid]["last_login"] = datetime.utcnow().isoformat()
-    _fb_set_user(cid, _users[cid])
+    record_activity(resolved_cid, "login", f"Logged in (role={role})")
+    _users[resolved_cid]["last_login"] = datetime.utcnow().isoformat()
+    _fb_set_user(resolved_cid, _users[resolved_cid])
 
     token = create_access_token(
-        data={"sub": cid, "name": user["company_name"], "type": "user", "role": role}
+        data={"sub": resolved_cid, "name": user["company_name"], "type": "user", "role": role}
     )
     return TokenResponse(
         access_token=token,

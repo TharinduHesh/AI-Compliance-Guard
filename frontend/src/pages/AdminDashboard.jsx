@@ -64,9 +64,18 @@ import { adminAPI } from '../services/api'
 import { useTheme as useAppTheme } from '../ThemeContext'
 
 /* ── Helpers ──────────────────────────────────────────────── */
+// Backend returns UTC timestamps via datetime.utcnow().isoformat() — no 'Z' suffix.
+// Append 'Z' so JS parses them as UTC and converts to local time correctly.
+const toUtcDate = (iso) => {
+  if (!iso) return null
+  // Already has timezone info
+  if (iso.endsWith('Z') || iso.includes('+')) return new Date(iso)
+  return new Date(iso + 'Z')
+}
+
 const fmtDate = (iso) => {
   if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('en-US', {
+  return toUtcDate(iso).toLocaleString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit',
   })
@@ -74,7 +83,9 @@ const fmtDate = (iso) => {
 
 const fmtRelative = (iso) => {
   if (!iso) return 'Never'
-  const diff = Date.now() - new Date(iso).getTime()
+  const d = toUtcDate(iso)
+  if (!d) return 'Never'
+  const diff = Date.now() - d.getTime()
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return 'Just now'
   if (mins < 60) return `${mins}m ago`
@@ -167,6 +178,9 @@ export default function AdminDashboard() {
   const [histSearch, setHistSearch] = useState('')
   const [histPage, setHistPage] = useState(0)
   const [histRowsPerPage, setHistRowsPerPage] = useState(10)
+  const [historyDeletePeriod, setHistoryDeletePeriod] = useState('month')
+  const [historyDeleteDialogOpen, setHistoryDeleteDialogOpen] = useState(false)
+  const [historyDeleting, setHistoryDeleting] = useState(false)
 
   // User Documents state
   const [userDocs, setUserDocs] = useState([])
@@ -179,6 +193,8 @@ export default function AdminDashboard() {
   // Uploaded Files state (actual files on disk)
   const [userFiles, setUserFiles] = useState([])
   const [filesLoading, setFilesLoading] = useState(false)
+  const [analytics, setAnalytics] = useState(null)
+  const [analyticsLoading, setAnalyticsLoading] = useState(false)
 
   /* Auth guard */
   const currentUser = (() => {
@@ -224,11 +240,18 @@ export default function AdminDashboard() {
     finally { setFilesLoading(false) }
   }, [])
 
-  useEffect(() => {
-    if (isAdmin) { fetchUsers(); fetchActivities(); fetchHistory(); fetchUserDocs(); fetchUserFiles() }
-  }, [isAdmin, fetchUsers, fetchActivities, fetchHistory, fetchUserDocs, fetchUserFiles])
+  const fetchAnalytics = useCallback(async () => {
+    setAnalyticsLoading(true)
+    try { setAnalytics(await adminAPI.getAnalytics()) }
+    catch { setAnalytics(null) }
+    finally { setAnalyticsLoading(false) }
+  }, [])
 
-  const refreshAll = () => { fetchUsers(); fetchActivities(); fetchHistory(); fetchUserDocs(); fetchUserFiles() }
+  useEffect(() => {
+    if (isAdmin) { fetchUsers(); fetchActivities(); fetchHistory(); fetchUserDocs(); fetchUserFiles(); fetchAnalytics() }
+  }, [isAdmin, fetchUsers, fetchActivities, fetchHistory, fetchUserDocs, fetchUserFiles, fetchAnalytics])
+
+  const refreshAll = () => { fetchUsers(); fetchActivities(); fetchHistory(); fetchUserDocs(); fetchUserFiles(); fetchAnalytics() }
 
   /* ── Add user ──────────────────────────────────────────── */
   const handleOpenAdd = () => {
@@ -264,6 +287,22 @@ export default function AdminDashboard() {
     } catch (e) { toast.error(e?.response?.data?.detail || 'Failed to delete user') }
   }
 
+  const handleDeleteHistoryByPeriod = async () => {
+    setHistoryDeleting(true)
+    try {
+      const res = await adminAPI.deleteActivityLogs(historyDeletePeriod)
+      toast.success(
+        `Deleted ${res.deleted || 0} history records and ${res.deleted_files || 0} files (${historyDeletePeriod.replace('_', ' ')})`
+      )
+      setHistoryDeleteDialogOpen(false)
+      refreshAll()
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Failed to delete history')
+    } finally {
+      setHistoryDeleting(false)
+    }
+  }
+
   /* ── Access guard ──────────────────────────────────────── */
   if (!isAdmin) {
     return (
@@ -280,7 +319,7 @@ export default function AdminDashboard() {
   const userCount = users.filter(u => u.role === 'user').length
   const onlineRecent = users.filter(u => {
     if (!u.last_login) return false
-    return (Date.now() - new Date(u.last_login).getTime()) < 86400000 // 24h
+    return (Date.now() - toUtcDate(u.last_login).getTime()) < 86400000 // 24h
   }).length
 
   // Filtered activities
@@ -367,6 +406,7 @@ export default function AdminDashboard() {
           <Tab icon={<FolderIcon />} iconPosition="start" label="User Documents" sx={{ textTransform: 'none', fontWeight: 600 }} />
           <Tab icon={<HistoryIcon />} iconPosition="start" label="User Activities" sx={{ textTransform: 'none', fontWeight: 600 }} />
           <Tab icon={<DocIcon />} iconPosition="start" label="History" sx={{ textTransform: 'none', fontWeight: 600 }} />
+          <Tab icon={<AnalysisIcon />} iconPosition="start" label="Monitoring" sx={{ textTransform: 'none', fontWeight: 600 }} />
         </Tabs>
 
         {/* ────────────── TAB 0: User Management ────────── */}
@@ -738,6 +778,26 @@ export default function AdminDashboard() {
                 <MenuItem value="upload">Uploads & Analyses</MenuItem>
                 <MenuItem value="chat">Chat Messages</MenuItem>
               </TextField>
+              <TextField
+                select
+                size="small"
+                value={historyDeletePeriod}
+                onChange={e => setHistoryDeletePeriod(e.target.value)}
+                sx={{ minWidth: 170 }}
+              >
+                <MenuItem value="week">Once a week</MenuItem>
+                <MenuItem value="month">Once a month</MenuItem>
+                <MenuItem value="three_months">Three months</MenuItem>
+              </TextField>
+              <Button
+                color="error"
+                variant="outlined"
+                startIcon={<DeleteIcon />}
+                onClick={() => setHistoryDeleteDialogOpen(true)}
+                sx={{ textTransform: 'none' }}
+              >
+                Delete History
+              </Button>
               <Typography variant="body2" color="text.secondary" sx={{ ml: 'auto' }}>
                 {(() => {
                   const f = historyData.filter(h => {
@@ -840,6 +900,159 @@ export default function AdminDashboard() {
             </TableContainer>
           </Box>
         )}
+
+        {/* ────────────── TAB 4: Monitoring ─────────────── */}
+        {tab === 4 && (
+          <Box sx={{ p: 2 }}>
+            {analyticsLoading ? (
+              <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>
+            ) : (
+              (() => {
+                const tracker = analytics?.chat_tracker || {}
+                const topUsers = tracker.top_chat_users || []
+                const topTerms = tracker.top_search_terms || []
+                const topQueries = tracker.top_search_queries || []
+                const mostActive = tracker.most_active_chat_user
+
+                return (
+                  <>
+                    <Typography variant="h6" fontWeight={600} sx={{ mb: 2 }}>
+                      Monitoring Dashboard
+                    </Typography>
+
+                    <Grid container spacing={2} sx={{ mb: 2 }}>
+                      <Grid item xs={12} sm={6} md={4}>
+                        <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+                          <CardContent>
+                            <Typography variant="caption" color="text.secondary">Most Active User</Typography>
+                            <Typography variant="h6" fontWeight={700} sx={{ mt: 0.5 }}>
+                              {mostActive?.company_name || mostActive?.user || '—'}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              {mostActive ? `${mostActive.chats} chat messages` : 'No chat data'}
+                            </Typography>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                      <Grid item xs={12} sm={6} md={4}>
+                        <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+                          <CardContent>
+                            <Typography variant="caption" color="text.secondary">Total Chat Messages</Typography>
+                            <Typography variant="h6" fontWeight={700} sx={{ mt: 0.5 }}>
+                              {tracker.total_chat_messages ?? 0}
+                            </Typography>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                      <Grid item xs={12} sm={6} md={4}>
+                        <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+                          <CardContent>
+                            <Typography variant="caption" color="text.secondary">Unique Search Terms</Typography>
+                            <Typography variant="h6" fontWeight={700} sx={{ mt: 0.5 }}>
+                              {topTerms.length}
+                            </Typography>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                    </Grid>
+
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} md={6}>
+                        <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
+                          <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+                            <Typography variant="subtitle1" fontWeight={600}>Top Users by Chat Usage</Typography>
+                          </Box>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow sx={{ bgcolor: theadBg }}>
+                                <TableCell sx={{ fontWeight: 700 }}>#</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>User</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>Company</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>Chats</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {topUsers.length === 0 ? (
+                                <TableRow><TableCell colSpan={4} align="center"><Typography sx={{ py: 2 }} color="text.secondary">No data yet</Typography></TableCell></TableRow>
+                              ) : (
+                                topUsers.map((u, idx) => (
+                                  <TableRow key={`${u.user}-${idx}`} hover>
+                                    <TableCell>{idx + 1}</TableCell>
+                                    <TableCell><strong>{u.user}</strong></TableCell>
+                                    <TableCell>{u.company_name || '—'}</TableCell>
+                                    <TableCell><Chip size="small" color="info" label={u.chats} /></TableCell>
+                                  </TableRow>
+                                ))
+                              )}
+                            </TableBody>
+                          </Table>
+                        </Paper>
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
+                          <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+                            <Typography variant="subtitle1" fontWeight={600}>Most Searched Terms</Typography>
+                          </Box>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow sx={{ bgcolor: theadBg }}>
+                                <TableCell sx={{ fontWeight: 700 }}>#</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>Term</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>Count</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {topTerms.length === 0 ? (
+                                <TableRow><TableCell colSpan={3} align="center"><Typography sx={{ py: 2 }} color="text.secondary">No data yet</Typography></TableCell></TableRow>
+                              ) : (
+                                topTerms.slice(0, 10).map((t, idx) => (
+                                  <TableRow key={`${t.term}-${idx}`} hover>
+                                    <TableCell>{idx + 1}</TableCell>
+                                    <TableCell>{t.term}</TableCell>
+                                    <TableCell>{t.count}</TableCell>
+                                  </TableRow>
+                                ))
+                              )}
+                            </TableBody>
+                          </Table>
+                        </Paper>
+                      </Grid>
+                    </Grid>
+
+                    <Paper elevation={0} sx={{ mt: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
+                      <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+                        <Typography variant="subtitle1" fontWeight={600}>Most Repeated Search Queries</Typography>
+                      </Box>
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow sx={{ bgcolor: theadBg }}>
+                            <TableCell sx={{ fontWeight: 700 }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 700 }}>Query</TableCell>
+                            <TableCell sx={{ fontWeight: 700 }}>Count</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {topQueries.length === 0 ? (
+                            <TableRow><TableCell colSpan={3} align="center"><Typography sx={{ py: 2 }} color="text.secondary">No data yet</Typography></TableCell></TableRow>
+                          ) : (
+                            topQueries.slice(0, 10).map((q, idx) => (
+                              <TableRow key={`${q.query}-${idx}`} hover>
+                                <TableCell>{idx + 1}</TableCell>
+                                <TableCell><Typography variant="body2" noWrap sx={{ maxWidth: 700 }}>{q.query}</Typography></TableCell>
+                                <TableCell>{q.count}</TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </Paper>
+                  </>
+                )
+              })()
+            )}
+          </Box>
+        )}
+
       </Paper>
 
       {/* ── Add User Dialog ───────────────────────────────── */}
@@ -896,6 +1109,34 @@ export default function AdminDashboard() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Dialog
+        open={historyDeleteDialogOpen}
+        onClose={() => !historyDeleting && setHistoryDeleteDialogOpen(false)}
+      >
+        <DialogTitle sx={{ fontWeight: 700 }}>Delete Users History</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Delete old users history, activities, and uploaded documents older than <strong>{historyDeletePeriod.replace('_', ' ')}</strong>?
+          </Typography>
+          <Typography variant="body2" color="error" sx={{ mt: 1 }}>
+            This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setHistoryDeleteDialogOpen(false)} disabled={historyDeleting}>Cancel</Button>
+          <Button
+            onClick={handleDeleteHistoryByPeriod}
+            color="error"
+            variant="contained"
+            disabled={historyDeleting}
+            sx={{ borderRadius: 2, textTransform: 'none' }}
+          >
+            {historyDeleting ? 'Deleting...' : 'Confirm Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
     </Box>
     </MuiThemeProvider>
   )

@@ -172,6 +172,18 @@ export const adminAPI = {
     const token = localStorage.getItem('token')
     return `${API_BASE_URL}/admin/user-files/download?user=${encodeURIComponent(userId)}&filename=${encodeURIComponent(storedName)}&token=${token}`
   },
+
+  getAnalytics: async () => {
+    const response = await api.get('/admin/analytics')
+    return response.data
+  },
+
+  deleteActivityLogs: async (period, actionFilter = null) => {
+    const params = { period }
+    if (actionFilter) params.action_filter = actionFilter
+    const response = await api.delete('/admin/activity-logs', { params })
+    return response.data
+  },
 }
 
 export default api

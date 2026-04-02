@@ -20,7 +20,7 @@ from app.models.schemas import (
 )
 from app.modules.chat_engine import chat_engine
 from app.config.settings import settings
-from app.api.endpoints.auth import verify_token, record_activity
+from app.api.endpoints.auth import verify_user, record_activity
 from fastapi import Depends
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ router = APIRouter()
 
 
 @router.post("/message", response_model=ChatMessageResponse)
-async def send_message(request: ChatMessageRequest, token_data: dict = Depends(verify_token)):
+async def send_message(request: ChatMessageRequest, token_data: dict = Depends(verify_user)):
     """
     Send a chat message and get AI compliance response.
     If conversation_id is empty a new conversation is created.
@@ -64,7 +64,7 @@ async def upload_and_ask(
     message: str = Form(default="Analyze this document for compliance"),
     conversation_id: str = Form(default=""),
     frameworks: str = Form(default="iso27001"),
-    token_data: dict = Depends(verify_token),
+    token_data: dict = Depends(verify_user),
 ):
     """
     Upload a document and ask a question about it in one step.
@@ -148,7 +148,7 @@ async def upload_and_ask(
 async def upload_document_to_chat(
     file: UploadFile = File(...),
     conversation_id: str = Form(default=""),
-    token_data: dict = Depends(verify_token),
+    token_data: dict = Depends(verify_user),
 ):
     """
     Upload a document to an existing or new conversation (without asking a question).
@@ -210,7 +210,7 @@ async def upload_document_to_chat(
 
 
 @router.get("/conversation/{conversation_id}")
-async def get_conversation(conversation_id: str):
+async def get_conversation(conversation_id: str, token_data: dict = Depends(verify_user)):
     """
     Get conversation history.
     """
@@ -227,14 +227,14 @@ async def get_conversation(conversation_id: str):
 
 
 @router.delete("/conversation/{conversation_id}")
-async def delete_conversation(conversation_id: str):
+async def delete_conversation(conversation_id: str, token_data: dict = Depends(verify_user)):
     """Delete a conversation."""
     chat_engine.delete_conversation(conversation_id)
     return {"message": "Conversation deleted"}
 
 
 @router.post("/new")
-async def new_conversation():
+async def new_conversation(token_data: dict = Depends(verify_user)):
     """Create a new empty conversation."""
     conv_id = secrets.token_urlsafe(16)
     chat_engine.create_conversation(conv_id)
@@ -250,16 +250,15 @@ async def new_conversation():
 
 
 @router.get("/llm/status")
-async def llm_status():
+async def llm_status(token_data: dict = Depends(verify_user)):
     """Return current LLM provider status."""
     try:
         llm = chat_engine.llm
+        # Only expose managed API model details in status responses.
         if settings.LLM_PROVIDER == "gemini":
             model_name = settings.GEMINI_MODEL
-        elif settings.LLM_PROVIDER == "llama_cpp":
-            model_name = settings.LLAMA_MODEL_FILE
         else:
-            model_name = settings.LLAMA_HF_MODEL
+            model_name = None
         return {
             "provider": settings.LLM_PROVIDER,
             "available": llm is not None,

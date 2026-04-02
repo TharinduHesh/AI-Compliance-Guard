@@ -52,17 +52,17 @@ function App() {
         {/* Users only get the full-screen Chat page (no navbar) */}
         <Route path="/chat" element={
           isAdmin
-            ? <Layout onLogout={handleLogout}><Chat onLogout={handleLogout} /></Layout>
+            ? <Navigate to="/admin" replace />
             : <Chat onLogout={handleLogout} />
         } />
 
-        {/* Admin pages — wrapped in Layout with navbar */}
-        <Route path="/dashboard" element={isAdmin ? <Layout onLogout={handleLogout}><UserDashboard /></Layout> : <Navigate to="/chat" replace />} />
-        <Route path="/upload" element={isAdmin ? <Layout onLogout={handleLogout}><UploadDocument /></Layout> : <Navigate to="/chat" replace />} />
-        <Route path="/results/:analysisId" element={isAdmin ? <Layout onLogout={handleLogout}><AnalysisResults /></Layout> : <Navigate to="/chat" replace />} />
-        <Route path="/frameworks" element={isAdmin ? <Layout onLogout={handleLogout}><Frameworks /></Layout> : <Navigate to="/chat" replace />} />
-        <Route path="/history" element={isAdmin ? <Layout onLogout={handleLogout}><History /></Layout> : <Navigate to="/chat" replace />} />
-        <Route path="/about" element={isAdmin ? <Layout onLogout={handleLogout}><About /></Layout> : <Navigate to="/chat" replace />} />
+        {/* Shared authenticated pages — wrapped in Layout */}
+        <Route path="/dashboard" element={<Layout onLogout={handleLogout}><UserDashboard /></Layout>} />
+        <Route path="/upload" element={<Layout onLogout={handleLogout}><UploadDocument /></Layout>} />
+        <Route path="/results/:analysisId" element={<Layout onLogout={handleLogout}><AnalysisResults /></Layout>} />
+        <Route path="/frameworks" element={<Layout onLogout={handleLogout}><Frameworks /></Layout>} />
+        <Route path="/history" element={<Layout onLogout={handleLogout}><History /></Layout>} />
+        <Route path="/about" element={<Layout onLogout={handleLogout}><About /></Layout>} />
 
         {/* Admin-only route */}
         <Route path="/admin" element={isAdmin ? <Layout onLogout={handleLogout}><AdminDashboard /></Layout> : <Navigate to="/chat" replace />} />

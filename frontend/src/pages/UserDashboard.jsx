@@ -22,9 +22,17 @@ import {
 import { useTheme as useAppTheme } from '../ThemeContext'
 
 /* ── Helpers ───────────────────────────────────────────────── */
+// Backend uses datetime.utcnow().isoformat() — no 'Z' suffix.
+// Append 'Z' so JS treats them as UTC and converts to local time.
+const toUtcDate = (iso) => {
+  if (!iso) return null
+  if (iso.endsWith('Z') || iso.includes('+')) return new Date(iso)
+  return new Date(iso + 'Z')
+}
+
 const fmtDate = (iso) => {
   if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('en-US', {
+  return toUtcDate(iso).toLocaleString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit',
   })
@@ -32,7 +40,9 @@ const fmtDate = (iso) => {
 
 const fmtRelative = (iso) => {
   if (!iso) return ''
-  const diff = Date.now() - new Date(iso).getTime()
+  const d = toUtcDate(iso)
+  if (!d) return ''
+  const diff = Date.now() - d.getTime()
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return 'Just now'
   if (mins < 60) return `${mins}m ago`
@@ -95,7 +105,8 @@ export default function UserDashboard() {
     : 0
   const recentUploads = history.filter(h => {
     if (!h.analyzedAt) return false
-    return (Date.now() - new Date(h.analyzedAt).getTime()) < 7 * 86400000
+    const d = toUtcDate(h.analyzedAt)
+    return d && (Date.now() - d.getTime()) < 7 * 86400000
   }).length
 
   const theadBg = isDark ? '#1e293b' : '#f1f5f9'

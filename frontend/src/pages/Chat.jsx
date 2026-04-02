@@ -947,6 +947,7 @@ export default function Chat({ onLogout }) {
   const [user] = useState(() => {
     try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
   })
+  const userStorageKey = `chatState:${user?.company_id || 'anonymous'}`
   const messagesEndRef = useRef(null)
   const fileInputRef = useRef(null)
   const textareaRef = useRef(null)
@@ -968,16 +969,63 @@ export default function Chat({ onLogout }) {
   useEffect(() => {
     if (hasInitRef.current) return
     hasInitRef.current = true
-    // No conversation created — just show the welcome screen
-    setActiveConvId(null)
-    setMessages([])
-    setDocumentName(null)
+
+    // Restore previous chat list for this user so chats remain visible after re-login.
+    let restoredActiveId = null
+    try {
+      const raw = localStorage.getItem(userStorageKey)
+      if (raw) {
+        const saved = JSON.parse(raw)
+        if (Array.isArray(saved?.conversations)) setConversations(saved.conversations)
+        if (saved?.activeConvId) {
+          restoredActiveId = saved.activeConvId
+          setActiveConvId(saved.activeConvId)
+        } else {
+          setActiveConvId(null)
+        }
+        if (saved?.documentName) setDocumentName(saved.documentName)
+      } else {
+        setActiveConvId(null)
+      }
+    } catch {
+      setActiveConvId(null)
+    }
+
+    if (restoredActiveId) {
+      chatAPI.getConversation(restoredActiveId)
+        .then(data => {
+          setMessages(data.messages || [])
+          setDocumentName(data.document_name || null)
+        })
+        .catch(() => {
+          setMessages([])
+          setDocumentName(null)
+        })
+    } else {
+      setMessages([])
+      setDocumentName(null)
+    }
 
     // Fetch LLM status
     chatAPI.getLLMStatus()
       .then(data => setLlmStatus(data))
       .catch(() => setLlmStatus({ provider: 'none', available: false, model: null }))
-  }, [])
+  }, [userStorageKey])
+
+  // Persist chat list per user across logout/login.
+  useEffect(() => {
+    try {
+      const persistedConversations = conversations.filter(c => !(c?.id || '').startsWith('temp_'))
+      const persistedActiveId = activeConvId && !String(activeConvId).startsWith('temp_') ? activeConvId : null
+      localStorage.setItem(userStorageKey, JSON.stringify({
+        conversations: persistedConversations,
+        activeConvId: persistedActiveId,
+        documentName: persistedActiveId ? documentName : null,
+      }))
+    } catch {
+      // ignore persistence failures
+    }
+  }, [conversations, activeConvId, documentName, userStorageKey])
 
   /* ── Auto-delete cleanup ────────────── */
   const getAutoDeleteMs = (dur) => {
@@ -1383,7 +1431,7 @@ export default function Chat({ onLogout }) {
           {llmStatus && (
             <div
               title={llmStatus.available
-                ? `Llama model: ${llmStatus.model || llmStatus.provider}`
+                ? `AI model: ${llmStatus.model || llmStatus.provider}`
                 : `LLM: ${llmStatus.provider} (rule-based mode)`}
               style={{
                 padding: '4px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
@@ -1398,7 +1446,7 @@ export default function Chat({ onLogout }) {
             >
               {llmStatus.available ? '🦙' : '⚡'}
               {llmStatus.available
-                ? (llmStatus.model || 'Llama').replace(/\.gguf$/, '').split('/').pop().slice(0, 20)
+                ? (llmStatus.model || 'AI model').replace(/\.gguf$/, '').split('/').pop().slice(0, 20)
                 : 'Rule-based'}
             </div>
           )}

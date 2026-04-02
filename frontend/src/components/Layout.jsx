@@ -37,11 +37,8 @@ import { useTheme as useAppTheme } from '../ThemeContext'
 /* Admin sees ALL pages (full control). Users see everything except Admin. */
 const adminPages = [
   { name: 'Admin Panel', path: '/admin', icon: <AdminPanelSettingsIcon /> },
-  { name: 'AI Chat', path: '/chat', icon: <ChatIcon /> },
   { name: 'Dashboard', path: '/dashboard', icon: <DashboardIcon /> },
-  { name: 'Frameworks', path: '/frameworks', icon: <AssessmentIcon /> },
   { name: 'History', path: '/history', icon: <HistoryIcon /> },
-  { name: 'About', path: '/about', icon: <InfoIcon /> },
 ]
 
 const userPages = [
@@ -262,7 +259,7 @@ function Layout({ children, onLogout }) {
                 © 2026 AIComplianceGuard - Secure AI-Powered Compliance Validation Platform
               </Typography>
               <Typography variant="caption" sx={{ color: '#64748b' }} align="center" display="block">
-                Built with ❤️ for secure compliance automation
+                All Right Reserved
               </Typography>
             </Container>
           </Box>

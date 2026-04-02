@@ -8,10 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import os
 from pathlib import Path
+import re
 
 from app.api.endpoints.auth import (
     verify_admin, verify_token,
@@ -363,3 +364,217 @@ async def cleanup_firebase_metadata(token_data: dict = Depends(verify_token)):
     except Exception as e:
         logger.error(f"Firebase cleanup error: {str(e)}")
         raise HTTPException(status_code=500, detail="Firebase cleanup failed")
+
+
+# ── Advanced Analytics ───────────────────────────────────────
+@router.get("/analytics")
+async def get_analytics(token_data: dict = Depends(verify_admin)):
+    """
+    Return advanced user engagement analytics:
+    - Per-user activity breakdown (logins, uploads, analyses, chats, total)
+    - Overall task-type totals
+    - Most/least active users
+    """
+    from app.api.endpoints.auth import _activity_log, _users
+
+    # Aggregate per-user counts
+    user_stats: dict = {}
+    task_totals = {"login": 0, "upload": 0, "analysis": 0, "chat": 0, "other": 0}
+
+    for entry in _activity_log:
+        uid = entry.get("user", "unknown")
+        action = entry.get("action", "other")
+
+        if uid not in user_stats:
+            udata = _users.get(uid, {})
+            user_stats[uid] = {
+                "user": uid,
+                "company_name": udata.get("company_name", uid),
+                "role": udata.get("role", "user"),
+                "last_login": udata.get("last_login"),
+                "logins": 0,
+                "uploads": 0,
+                "analyses": 0,
+                "chats": 0,
+                "total": 0,
+            }
+
+        user_stats[uid]["total"] += 1
+        if action == "login":
+            user_stats[uid]["logins"] += 1
+            task_totals["login"] += 1
+        elif action == "upload":
+            user_stats[uid]["uploads"] += 1
+            task_totals["upload"] += 1
+        elif action == "analysis":
+            user_stats[uid]["analyses"] += 1
+            task_totals["analysis"] += 1
+        elif action == "chat":
+            user_stats[uid]["chats"] += 1
+            task_totals["chat"] += 1
+        else:
+            task_totals["other"] += 1
+
+    # Rank users by total activity
+    ranked = sorted(user_stats.values(), key=lambda u: u["total"], reverse=True)
+
+    # Chat tracker: who uses chat the most and what they mostly search.
+    chat_user_counts: dict = {}
+    query_counts: dict = {}
+    term_counts: dict = {}
+
+    stop_words = {
+        "the", "and", "for", "that", "with", "this", "from", "your", "you", "are", "was", "were",
+        "have", "has", "had", "can", "could", "would", "should", "about", "what", "when", "where",
+        "which", "who", "why", "how", "not", "but", "all", "any", "our", "their", "they", "them",
+        "please", "help", "need", "want", "into", "than", "then", "also", "here", "there", "document",
+        "compliance", "chat", "message", "messages", "analyze", "analysis", "uploaded", "upload"
+    }
+
+    for entry in _activity_log:
+        if entry.get("action") != "chat":
+            continue
+
+        uid = entry.get("user", "unknown")
+        detail = (entry.get("detail") or "").strip()
+
+        chat_user_counts[uid] = chat_user_counts.get(uid, 0) + 1
+
+        if detail.lower().startswith("chat message:"):
+            query = detail.split(":", 1)[1].strip()
+        else:
+            query = detail
+
+        if query:
+            normalized_query = re.sub(r"\s+", " ", query).strip().lower()
+            query_counts[normalized_query] = query_counts.get(normalized_query, 0) + 1
+
+            words = re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", normalized_query)
+            for w in words:
+                if w in stop_words or w.isdigit():
+                    continue
+                term_counts[w] = term_counts.get(w, 0) + 1
+
+    top_chat_users = sorted(chat_user_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    top_queries = sorted(query_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    top_terms = sorted(term_counts.items(), key=lambda x: x[1], reverse=True)[:15]
+
+    top_chat_users_enriched = []
+    for uid, chats in top_chat_users:
+        udata = _users.get(uid, {})
+        top_chat_users_enriched.append({
+            "user": uid,
+            "company_name": udata.get("company_name", uid),
+            "role": udata.get("role", "user"),
+            "chats": chats,
+        })
+
+    most_active_chat_user = top_chat_users_enriched[0] if top_chat_users_enriched else None
+
+    return {
+        "user_rankings": ranked,
+        "task_totals": task_totals,
+        "total_events": len(_activity_log),
+        "total_users": len(_users),
+        "chat_tracker": {
+            "total_chat_messages": task_totals.get("chat", 0),
+            "most_active_chat_user": most_active_chat_user,
+            "top_chat_users": top_chat_users_enriched,
+            "top_search_queries": [{"query": q, "count": c} for q, c in top_queries],
+            "top_search_terms": [{"term": t, "count": c} for t, c in top_terms],
+        },
+    }
+
+
+# ── Delete Activity Logs by Period ───────────────────────────
+@router.delete("/activity-logs")
+async def delete_activity_logs(
+    period: str = "week",   # week | month | three_months | year
+    action_filter: Optional[str] = None,  # login | upload | analysis | chat | None (all)
+    token_data: dict = Depends(verify_admin),
+):
+    """
+    Delete activity log entries older than the given period.
+    Also deletes old uploaded user files for matching windows.
+    period: 'week' | 'month' | 'three_months' | 'year'
+    action_filter: optional — restrict deletion to a specific action type
+    """
+    period_map = {
+        "week": timedelta(weeks=1),
+        "month": timedelta(days=30),
+        "three_months": timedelta(days=90),
+        "year": timedelta(days=365),
+    }
+    if period not in period_map:
+        raise HTTPException(status_code=400, detail=f"Invalid period. Use: {list(period_map.keys())}")
+
+    cutoff = datetime.utcnow() - period_map[period]
+    cutoff_str = cutoff.isoformat()
+    cutoff_ts = cutoff.timestamp()
+
+    kept = []
+    deleted = 0
+
+    for entry in _activity_log:
+        ts = entry.get("timestamp", "")
+        action = entry.get("action", "")
+
+        # Determine if this entry is within the deletion window (older than cutoff)
+        is_old = ts < cutoff_str
+
+        # Apply action filter if provided
+        action_match = (action_filter is None) or (action == action_filter)
+
+        if is_old and action_match:
+            deleted += 1
+        else:
+            kept.append(entry)
+
+    # Replace the list in-place
+    _activity_log.clear()
+    _activity_log.extend(kept)
+
+    # Delete old uploaded files to clean user-document history.
+    deleted_files = 0
+    uploads_root = Path(settings.USER_UPLOADS_DIR)
+    should_cleanup_files = action_filter in (None, "upload", "analysis", "chat")
+    if should_cleanup_files and uploads_root.exists():
+        for user_dir in uploads_root.iterdir():
+            if not user_dir.is_dir():
+                continue
+            for fpath in user_dir.iterdir():
+                if not fpath.is_file():
+                    continue
+                try:
+                    if fpath.stat().st_mtime < cutoff_ts:
+                        fpath.unlink(missing_ok=True)
+                        deleted_files += 1
+                except Exception:
+                    continue
+
+            # Remove empty user folders after file cleanup
+            try:
+                if not any(user_dir.iterdir()):
+                    user_dir.rmdir()
+            except Exception:
+                pass
+
+    logger.info(
+        f"Admin deleted {deleted} activity log entries and {deleted_files} files "
+        f"(period={period}, filter={action_filter})"
+    )
+    record_activity(
+        token_data.get("sub", "admin"),
+        "delete_logs",
+        (
+            f"Deleted {deleted} log entries and {deleted_files} files "
+            f"(period={period}, filter={action_filter or 'all'})"
+        )
+    )
+    return {
+        "deleted": deleted,
+        "deleted_files": deleted_files,
+        "remaining": len(_activity_log),
+        "period": period,
+        "action_filter": action_filter or "all",
+    }

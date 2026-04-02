@@ -105,8 +105,10 @@ function History() {
   }
 
   const formatDate = (dateString) => {
-    const date = new Date(dateString)
-    return date.toLocaleString('en-US', {
+    if (!dateString) return '—'
+    // Backend returns UTC without 'Z' — append it so JS parses correctly
+    const iso = dateString.endsWith('Z') || dateString.includes('+') ? dateString : dateString + 'Z'
+    return new Date(iso).toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
