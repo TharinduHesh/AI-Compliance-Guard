@@ -18,8 +18,15 @@ import UserDashboard from './pages/UserDashboard'
 
 function App() {
   const [authed, setAuthed] = useState(() => !!localStorage.getItem('token'))
+  const navigate = useNavigate()
 
-  const handleAuth = useCallback(() => setAuthed(true), [])
+  const handleAuth = useCallback(() => {
+    setAuthed(true)
+    const role = (() => {
+      try { return JSON.parse(localStorage.getItem('user') || '{}').role } catch { return 'user' }
+    })()
+    navigate(role === 'admin' ? '/admin' : '/dashboard', { replace: true })
+  }, [navigate])
   const handleLogout = useCallback(() => {
     localStorage.removeItem('token')
     localStorage.removeItem('user')

@@ -18,7 +18,7 @@ from app.api.endpoints.auth import (
     verify_admin, verify_token,
     _users, get_user,
     _fb_set_user, _fb_delete_user, _fb_list_users,
-    _activity_log, record_activity,
+    _activity_log, _fb_load_activities, record_activity,
 )
 from app.modules.security_layer import security_layer
 from app.modules.firebase_storage import firebase_storage
@@ -69,6 +69,51 @@ def _safe_join(base_dir: Path, *parts: str) -> Path:
     if target != base and not str(target).startswith(str(base) + os.sep):
         raise HTTPException(status_code=400, detail="Invalid file path")
     return target
+
+
+def _get_combined_activity_log(limit: int = 1000) -> list:
+    """
+    Merge activity logs from memory and Firebase, remove duplicates,
+    and sort newest first by timestamp.
+    """
+    local_logs = list(_activity_log)
+    firebase_logs = _fb_load_activities(limit) or []
+
+    merged = local_logs + firebase_logs
+    deduped = []
+    seen = set()
+    for entry in merged:
+        key = (
+            entry.get("user", ""),
+            entry.get("action", ""),
+            entry.get("detail", ""),
+            entry.get("timestamp", ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(entry)
+
+    deduped.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+    return deduped[:limit]
+
+
+def _resolve_user_from_upload_folder(folder_name: str) -> str:
+    """
+    Map a sanitized upload folder name back to the canonical user ID.
+    Example: Admin_ACG.lk -> Admin@ACG.lk
+    """
+    if not folder_name:
+        return folder_name
+
+    if folder_name in _users:
+        return folder_name
+
+    for user_id in _users.keys():
+        if _sanitize_path_part(user_id, "user") == folder_name:
+            return user_id
+
+    return folder_name
 
 
 # ── Schemas ──────────────────────────────────────────────────
@@ -168,7 +213,7 @@ async def list_activities(
     token_data: dict = Depends(verify_admin),
 ):
     """List recent user activities. Optionally filter by user company_id."""
-    logs = _activity_log
+    logs = _get_combined_activity_log(max(limit, 500))
     if user:
         logs = [a for a in logs if a.get("user") == user]
     return logs[:limit]
@@ -193,7 +238,7 @@ async def admin_history(
     else:
         allowed = {"upload", "analysis", "chat"}
 
-    logs = _activity_log
+    logs = _get_combined_activity_log(max(limit, 1000))
     if user:
         logs = [a for a in logs if a.get("user") == user]
     results = [a for a in logs if a.get("action") in allowed]
@@ -225,7 +270,7 @@ async def list_user_documents(
     """
     # Gather upload & analysis records from activity log
     upload_map = {}   # keyed by "user|detail" to de-dup
-    for entry in _activity_log:
+    for entry in _get_combined_activity_log(max(limit * 5, 1000)):
         uid = entry.get("user", "")
         action = entry.get("action", "")
         if action not in ("upload", "analysis"):
@@ -290,10 +335,11 @@ async def list_user_files(
     for user_dir in sorted(uploads_root.iterdir()):
         if not user_dir.is_dir():
             continue
-        uid = user_dir.name
+        folder_uid = user_dir.name
+        uid = _resolve_user_from_upload_folder(folder_uid)
         if user and uid != user:
             continue
-        udata = _users.get(uid, {})
+        udata = get_user(uid) or {}
 
         for fpath in sorted(user_dir.iterdir(), reverse=True):
             if fpath.is_file():
@@ -302,6 +348,7 @@ async def list_user_files(
                 orig_name = "_".join(fpath.name.split("_")[2:]) if fpath.name.count("_") >= 2 else fpath.name
                 result.append({
                     "user": uid,
+                    "user_name": udata.get("company_name", uid),
                     "company_name": udata.get("company_name", uid),
                     "filename": orig_name,
                     "stored_name": fpath.name,

@@ -317,15 +317,15 @@ function AnalysisResults() {
                     sx={{ mt: 1 }}
                   />
                 </Box>
-                <ResponsiveContainer width="100%" height={200}>
-                  <PieChart>
+                <ResponsiveContainer width="100%" height={230}>
+                  <PieChart margin={{ top: 8, right: 24, bottom: 8, left: 24 }}>
                     <Pie
                       data={ciaData}
                       cx="50%"
                       cy="50%"
                       labelLine={false}
-                      label={({ name, value }) => `${name}: ${value.toFixed(1)}%`}
-                      outerRadius={80}
+                      label={({ value }) => `${value.toFixed(1)}%`}
+                      outerRadius={72}
                       fill="#8884d8"
                       dataKey="value"
                     >
@@ -336,6 +336,23 @@ function AnalysisResults() {
                     <Tooltip />
                   </PieChart>
                 </ResponsiveContainer>
+                <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center', gap: 2, flexWrap: 'wrap' }}>
+                  {ciaData.map((item, i) => (
+                    <Box key={item.name} sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <Box
+                        sx={{
+                          width: 10,
+                          height: 10,
+                          borderRadius: '50%',
+                          bgcolor: CIA_COLORS[i % CIA_COLORS.length],
+                        }}
+                      />
+                      <Typography variant="body2" color="text.secondary">
+                        {item.name}: {item.value.toFixed(1)}%
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
               </CardContent>
             </Card>
           </Grid>

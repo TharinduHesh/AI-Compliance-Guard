@@ -55,7 +55,10 @@ function Layout({ children, onLogout }) {
   const location = useLocation()
   const navigate = useNavigate()
   const userRole = (() => { try { return JSON.parse(localStorage.getItem('user'))?.role } catch { return null } })()
-  const pages = userRole === 'admin' ? adminPages : userPages
+  const isChatRoute = location.pathname === '/chat'
+  const pages = userRole === 'admin'
+    ? adminPages
+    : (isChatRoute ? userPages.filter((page) => page.path !== '/dashboard') : userPages)
   const { isDark } = useAppTheme()
 
   const handleLogout = () => {
@@ -77,7 +80,7 @@ function Layout({ children, onLogout }) {
         text: { primary: '#1e293b', secondary: '#475569' },
         divider: '#e2e8f0',
       }),
-      primary: { main: '#6366f1' },
+      primary: { main: '#35627A' },
     },
     typography: { fontFamily: '"Inter", "Segoe UI", Roboto, sans-serif' },
     components: {

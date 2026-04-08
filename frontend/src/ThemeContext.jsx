@@ -25,26 +25,26 @@ const DARK = {
   textDimmed:  '#475569',
   textHeading: '#f1f5f9',
   // Accent
-  accent:      '#10b981',
-  accentDark:  '#059669',
-  accentBg:    '#064e3b',
-  accentText:  '#34d399',
-  accentLight: '#4ade80',
+  accent:      '#35627A',
+  accentDark:  '#2B5165',
+  accentBg:    '#233845',
+  accentText:  '#A6A9D0',
+  accentLight: '#A6A9D0',
   // Error
   errorBg:     'rgba(239,68,68,0.12)',
   errorBorder: 'rgba(239,68,68,0.3)',
   errorText:   '#fca5a5',
   // User bubble
-  userGrad1:   '#6366f1',
-  userGrad2:   '#8b5cf6',
-  userLabel:   '#a78bfa',
+  userGrad1:   '#35627A',
+  userGrad2:   '#A6A9D0',
+  userLabel:   '#E5AEA9',
   // Scrollbar
   scrollThumb: '#334155',
   // Button states
   btnDisabled: '#374151',
   btnDisabledText: '#64748b',
   // Glow
-  glowColor:   'rgba(16,185,129,0.08)',
+  glowColor:   'rgba(53,98,122,0.12)',
 }
 
 const LIGHT = {
@@ -64,21 +64,21 @@ const LIGHT = {
   textMuted:   '#64748b',
   textDimmed:  '#94a3b8',
   textHeading: '#0f172a',
-  accent:      '#10b981',
-  accentDark:  '#059669',
-  accentBg:    '#ecfdf5',
-  accentText:  '#059669',
-  accentLight: '#10b981',
+  accent:      '#35627A',
+  accentDark:  '#2B5165',
+  accentBg:    '#F5F5F5',
+  accentText:  '#35627A',
+  accentLight: '#A6A9D0',
   errorBg:     'rgba(239,68,68,0.08)',
   errorBorder: 'rgba(239,68,68,0.25)',
   errorText:   '#dc2626',
-  userGrad1:   '#6366f1',
-  userGrad2:   '#8b5cf6',
-  userLabel:   '#6366f1',
+  userGrad1:   '#35627A',
+  userGrad2:   '#A6A9D0',
+  userLabel:   '#35627A',
   scrollThumb: '#cbd5e1',
   btnDisabled: '#e2e8f0',
   btnDisabledText: '#94a3b8',
-  glowColor:   'rgba(16,185,129,0.05)',
+  glowColor:   'rgba(53,98,122,0.08)',
 }
 
 const ThemeContext = createContext({ theme: DARK, isDark: true, toggle: () => {} })

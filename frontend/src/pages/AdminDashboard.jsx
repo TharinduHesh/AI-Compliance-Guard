@@ -128,11 +128,11 @@ export default function AdminDashboard() {
         text: { primary: '#1e293b', secondary: '#475569' },
         divider: '#e2e8f0',
       }),
-      primary: { main: '#6366f1' },
-      success: { main: '#10b981' },
-      warning: { main: '#f59e0b' },
+      primary: { main: '#35627A' },
+      success: { main: '#8E9A98' },
+      warning: { main: '#B46258' },
       error:   { main: '#ef4444' },
-      info:    { main: '#0ea5e9' },
+      info:    { main: '#A6A9D0' },
     },
     shape: { borderRadius: 10 },
     typography: { fontFamily: '"Inter", "Segoe UI", Roboto, sans-serif' },
@@ -214,7 +214,7 @@ export default function AdminDashboard() {
 
   const fetchActivities = useCallback(async () => {
     setActLoading(true)
-    try { setActivities(await adminAPI.listActivities(null, 500)) }
+    try { setActivities(await adminAPI.listActivities(null, 5000)) }
     catch { /* silent */ }
     finally { setActLoading(false) }
   }, [])
@@ -362,17 +362,64 @@ export default function AdminDashboard() {
     return (Date.now() - toUtcDate(u.last_login).getTime()) < 86400000 // 24h
   }).length
 
-  // Filtered activities
-  const filteredActivities = activities.filter(a => {
+  // Build a complete upload list: upload activity history + disk-backed files.
+  const diskFileIndex = {}
+  ;(userFiles || []).forEach((f) => {
+    const key = `${f.user || ''}::${(f.filename || '').toLowerCase()}`
+    if (!diskFileIndex[key]) {
+      diskFileIndex[key] = []
+    }
+    diskFileIndex[key].push(f)
+  })
+
+  const allUploadedDocs = (userDocs || [])
+    .filter((d) => d.action === 'upload')
+    .map((d, idx) => {
+      const key = `${d.user || ''}::${(d.filename || '').toLowerCase()}`
+      const diskMatch = (diskFileIndex[key] || [])[0] || null
+      return {
+        id: `${d.user || 'user'}_${d.timestamp || idx}`,
+        user: d.user,
+        user_name: d.user_name || d.company_name || d.user,
+        company_name: d.company_name,
+        filename: d.filename,
+        uploaded_at: d.timestamp || diskMatch?.uploaded_at,
+        size_bytes: diskMatch?.size_bytes || null,
+        stored_name: diskMatch?.stored_name || null,
+      }
+    })
+
+  // Build a complete activities stream: backend activity log + upload records.
+  // This ensures Upload actions appear even when activity windows are trimmed.
+  const uploadActivityRows = allUploadedDocs.map((d) => ({
+    user: d.user,
+    action: 'upload',
+    detail: d.filename ? `Uploaded ${d.filename}` : 'Uploaded document',
+    timestamp: d.uploaded_at || '',
+  }))
+
+  const combinedActivities = [...(activities || []), ...uploadActivityRows]
+    .filter((a) => a && a.user)
+    .reduce((acc, row) => {
+      const key = `${row.user || ''}::${row.action || ''}::${row.detail || ''}::${row.timestamp || ''}`
+      if (!acc.map[key]) {
+        acc.map[key] = true
+        acc.items.push(row)
+      }
+      return acc
+    }, { map: {}, items: [] }).items
+    .sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')))
+
+  const filteredActivities = combinedActivities.filter(a => {
     if (actFilter !== 'all' && a.action !== actFilter) return false
     if (actSearch && !a.user?.toLowerCase().includes(actSearch.toLowerCase()) &&
         !a.detail?.toLowerCase().includes(actSearch.toLowerCase())) return false
     return true
   })
 
-  // Per-user activity counts
+  // Per-user activity counts (based on complete combined activity stream)
   const userActivityMap = {}
-  activities.forEach(a => {
+  combinedActivities.forEach(a => {
     if (!userActivityMap[a.user]) userActivityMap[a.user] = { logins: 0, uploads: 0, analyses: 0, total: 0 }
     userActivityMap[a.user].total++
     if (a.action === 'login') userActivityMap[a.user].logins++
@@ -382,7 +429,7 @@ export default function AdminDashboard() {
 
   // Stat-card palette — theme-aware backgrounds
   const statCards = [
-    { icon: <GroupIcon />, value: users.length, label: 'Total Accounts', color: '#6366f1', bg: isDark ? '#1e1b4b' : '#eef2ff' },
+    { icon: <GroupIcon />, value: users.length, label: 'Total Accounts', color: '#35627A', bg: isDark ? '#1f3645' : '#e8eff2' },
     { icon: <PersonIcon />, value: userCount, label: 'Users', color: '#0891b2', bg: isDark ? '#083344' : '#ecfeff' },
     { icon: <AdminIcon />, value: adminCount, label: 'Admins', color: '#d97706', bg: isDark ? '#422006' : '#fffbeb' },
     { icon: <TimeIcon />, value: onlineRecent, label: 'Active (24h)', color: '#16a34a', bg: isDark ? '#052e16' : '#f0fdf4' },
@@ -568,8 +615,8 @@ export default function AdminDashboard() {
               <Typography variant="body2" color="text.secondary" sx={{ ml: 'auto' }}>
                 {(() => {
                   const q = docsSearch.toLowerCase()
-                  const f = userFiles.filter(d =>
-                    !q || d.user?.toLowerCase().includes(q) || d.company_name?.toLowerCase().includes(q) || d.filename?.toLowerCase().includes(q)
+                  const f = allUploadedDocs.filter(d =>
+                    !q || d.user?.toLowerCase().includes(q) || d.user_name?.toLowerCase().includes(q) || d.company_name?.toLowerCase().includes(q) || d.filename?.toLowerCase().includes(q)
                   )
                   return `${f.length} files`
                 })()}
@@ -582,8 +629,8 @@ export default function AdminDashboard() {
               ) : (
                 (() => {
                   const q = docsSearch.toLowerCase()
-                  const filtered = userFiles.filter(d =>
-                    !q || d.user?.toLowerCase().includes(q) || d.company_name?.toLowerCase().includes(q) || d.filename?.toLowerCase().includes(q)
+                  const filtered = allUploadedDocs.filter(d =>
+                    !q || d.user?.toLowerCase().includes(q) || d.user_name?.toLowerCase().includes(q) || d.company_name?.toLowerCase().includes(q) || d.filename?.toLowerCase().includes(q)
                   )
                   return (
                     <>
@@ -592,6 +639,7 @@ export default function AdminDashboard() {
                           <TableRow sx={{ bgcolor: theadBg }}>
                             <TableCell sx={{ fontWeight: 700, width: 40 }}>#</TableCell>
                             <TableCell sx={{ fontWeight: 700 }}>User</TableCell>
+                            <TableCell sx={{ fontWeight: 700 }}>User Name</TableCell>
                             <TableCell sx={{ fontWeight: 700 }}>Company</TableCell>
                             <TableCell sx={{ fontWeight: 700 }}>File Name</TableCell>
                             <TableCell sx={{ fontWeight: 700 }}>Size</TableCell>
@@ -602,7 +650,7 @@ export default function AdminDashboard() {
                         <TableBody>
                           {filtered.length === 0 ? (
                             <TableRow>
-                              <TableCell colSpan={7} align="center">
+                              <TableCell colSpan={8} align="center">
                                 <Box sx={{ py: 4, textAlign: 'center' }}>
                                   <FolderIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 1 }} />
                                   <Typography color="text.secondary">No uploaded files found</Typography>
@@ -616,13 +664,15 @@ export default function AdminDashboard() {
                             filtered
                               .slice(docsPage * docsRowsPerPage, docsPage * docsRowsPerPage + docsRowsPerPage)
                               .map((f, idx) => {
-                                const sizeKB = (f.size_bytes / 1024).toFixed(1)
-                                const sizeMB = (f.size_bytes / (1024 * 1024)).toFixed(2)
-                                const sizeLabel = f.size_bytes > 1024 * 1024 ? `${sizeMB} MB` : `${sizeKB} KB`
+                                const sizeLabel = f.size_bytes
+                                  ? (f.size_bytes > 1024 * 1024
+                                    ? `${(f.size_bytes / (1024 * 1024)).toFixed(2)} MB`
+                                    : `${(f.size_bytes / 1024).toFixed(1)} KB`)
+                                  : '—'
                                 const ext = f.filename?.split('.').pop()?.toLowerCase() || ''
                                 const isPDF = ext === 'pdf'
                                 return (
-                                  <TableRow key={idx} hover>
+                                  <TableRow key={f.id || idx} hover>
                                     <TableCell>{docsPage * docsRowsPerPage + idx + 1}</TableCell>
                                     <TableCell>
                                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -632,6 +682,7 @@ export default function AdminDashboard() {
                                         <strong>{f.user}</strong>
                                       </Box>
                                     </TableCell>
+                                    <TableCell>{f.user_name || f.company_name || f.user || '—'}</TableCell>
                                     <TableCell>{f.company_name || '—'}</TableCell>
                                     <TableCell>
                                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -656,10 +707,11 @@ export default function AdminDashboard() {
                                       </Typography>
                                     </TableCell>
                                     <TableCell align="center">
-                                      <Tooltip title="Download file">
+                                      <Tooltip title={f.stored_name ? 'Download file' : 'File metadata only (not available on disk)'}>
                                         <IconButton
                                           size="small"
                                           color="primary"
+                                          disabled={!f.stored_name}
                                           onClick={() => {
                                             const url = adminAPI.downloadUserFile(f.user, f.stored_name)
                                             window.open(url, '_blank')
@@ -950,7 +1002,6 @@ export default function AdminDashboard() {
               (() => {
                 const tracker = analytics?.chat_tracker || {}
                 const topUsers = tracker.top_chat_users || []
-                const topTerms = tracker.top_search_terms || []
                 const topQueries = tracker.top_search_queries || []
                 const mostActive = tracker.most_active_chat_user
 
@@ -1015,9 +1066,9 @@ export default function AdminDashboard() {
                       <Grid item xs={12} sm={6} md={4}>
                         <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
                           <CardContent>
-                            <Typography variant="caption" color="text.secondary">Unique Search Terms</Typography>
+                            <Typography variant="caption" color="text.secondary">Most Asked Questions</Typography>
                             <Typography variant="h6" fontWeight={700} sx={{ mt: 0.5 }}>
-                              {topTerms.length}
+                              {topQueries.length}
                             </Typography>
                           </CardContent>
                         </Card>
@@ -1078,69 +1129,18 @@ export default function AdminDashboard() {
                           </Table>
                         </Paper>
                       </Grid>
-                      <Grid item xs={12} md={6}>
-                        <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
-                          <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
-                            <Typography variant="subtitle1" fontWeight={600}>Most Searched Terms</Typography>
-                            <Button
-                              size="small"
-                              color="error"
-                              variant="outlined"
-                              startIcon={<DeleteIcon />}
-                              disabled={monitorActionLoading || topTerms.length === 0}
-                              onClick={() => handleDeleteMonitoringData('search_term', null, true, 'all searched terms')}
-                              sx={{ textTransform: 'none' }}
-                            >
-                              Clear All
-                            </Button>
-                          </Box>
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow sx={{ bgcolor: theadBg }}>
-                                <TableCell sx={{ fontWeight: 700 }}>#</TableCell>
-                                <TableCell sx={{ fontWeight: 700 }}>Term</TableCell>
-                                <TableCell sx={{ fontWeight: 700 }}>Count</TableCell>
-                                <TableCell sx={{ fontWeight: 700 }} align="center">Delete</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {topTerms.length === 0 ? (
-                                <TableRow><TableCell colSpan={4} align="center"><Typography sx={{ py: 2 }} color="text.secondary">No data yet</Typography></TableCell></TableRow>
-                              ) : (
-                                topTerms.slice(0, 5).map((t, idx) => (
-                                  <TableRow key={`${t.term}-${idx}`} hover>
-                                    <TableCell>{idx + 1}</TableCell>
-                                    <TableCell>{t.term}</TableCell>
-                                    <TableCell>{t.count}</TableCell>
-                                    <TableCell align="center">
-                                      <IconButton
-                                        color="error"
-                                        size="small"
-                                        disabled={monitorActionLoading}
-                                        onClick={() => handleDeleteMonitoringData('search_term', t.term, false, `term ${t.term}`)}
-                                      >
-                                        <DeleteIcon fontSize="small" />
-                                      </IconButton>
-                                    </TableCell>
-                                  </TableRow>
-                                ))
-                              )}
-                            </TableBody>
-                          </Table>
-                        </Paper>
-                      </Grid>
                     </Grid>
 
                     <Paper elevation={0} sx={{ mt: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
                       <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
-                        <Typography variant="subtitle1" fontWeight={600}>Most Repeated Search Queries</Typography>
+                        <Typography variant="subtitle1" fontWeight={600}>Most Asked Questions</Typography>
                         <Button
                           size="small"
                           color="error"
                           variant="outlined"
                           startIcon={<DeleteIcon />}
                           disabled={monitorActionLoading || topQueries.length === 0}
-                          onClick={() => handleDeleteMonitoringData('search_query', null, true, 'all repeated queries')}
+                          onClick={() => handleDeleteMonitoringData('search_query', null, true, 'all asked questions')}
                           sx={{ textTransform: 'none' }}
                         >
                           Clear All

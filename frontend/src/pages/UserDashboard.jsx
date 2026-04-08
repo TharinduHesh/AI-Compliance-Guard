@@ -70,11 +70,11 @@ export default function UserDashboard() {
         text: { primary: '#1e293b', secondary: '#475569' },
         divider: '#e2e8f0',
       }),
-      primary: { main: '#6366f1' },
-      success: { main: '#10b981' },
-      warning: { main: '#f59e0b' },
+      primary: { main: '#35627A' },
+      success: { main: '#8E9A98' },
+      warning: { main: '#B46258' },
       error: { main: '#ef4444' },
-      info: { main: '#0ea5e9' },
+      info: { main: '#A6A9D0' },
     },
     shape: { borderRadius: 10 },
     typography: { fontFamily: '"Inter", "Segoe UI", Roboto, sans-serif' },
@@ -117,18 +117,18 @@ export default function UserDashboard() {
   const theadBg = isDark ? '#1e293b' : '#f1f5f9'
 
   const statCards = [
-    { icon: <AnalysisIcon />, value: totalAnalyses, label: 'Total Analyses', color: '#6366f1', bg: isDark ? '#1e1b4b' : '#eef2ff' },
-    { icon: <UploadIcon />, value: recentUploads, label: 'This Week', color: '#0891b2', bg: isDark ? '#083344' : '#ecfeff' },
-    { icon: <TrendIcon />, value: `${avgCompliance}%`, label: 'Avg Compliance', color: '#16a34a', bg: isDark ? '#052e16' : '#f0fdf4' },
-    { icon: <SecurityIcon />, value: 4, label: 'Frameworks', color: '#d97706', bg: isDark ? '#422006' : '#fffbeb' },
+    { icon: <AnalysisIcon />, value: totalAnalyses, label: 'Total Analyses', color: '#35627A', bg: isDark ? '#1f3645' : '#e8eff2' },
+    { icon: <UploadIcon />, value: recentUploads, label: 'This Week', color: '#A6A9D0', bg: isDark ? '#2d304c' : '#ececf8' },
+    { icon: <TrendIcon />, value: `${avgCompliance}%`, label: 'Avg Compliance', color: '#8E9A98', bg: isDark ? '#2a3332' : '#edf1f0' },
+    { icon: <SecurityIcon />, value: 4, label: 'Frameworks', color: '#B46258', bg: isDark ? '#442925' : '#f5dfdc' },
   ]
 
   const quickActions = [
-    { icon: <ChatIcon />, title: 'AI Chat', desc: 'Ask compliance questions', path: '/chat', color: '#6366f1' },
-    { icon: <UploadIcon />, title: 'Upload Document', desc: 'Analyze a new document', path: '/upload', color: '#0891b2' },
-    { icon: <HistoryIcon />, title: 'History', desc: 'View past analyses', path: '/history', color: '#d97706' },
-    { icon: <DocIcon />, title: 'Frameworks', desc: 'Browse supported frameworks', path: '/frameworks', color: '#16a34a' },
-    { icon: <InfoIcon />, title: 'About', desc: 'Learn about AIComplianceGuard', path: '/about', color: '#7c3aed' },
+    { icon: <ChatIcon />, title: 'AI Chat', desc: 'Ask compliance questions', path: '/chat', color: '#35627A' },
+    { icon: <UploadIcon />, title: 'Upload Document', desc: 'Analyze a new document', path: '/upload', color: '#B46258' },
+    { icon: <HistoryIcon />, title: 'History', desc: 'View past analyses', path: '/history', color: '#8E9A98' },
+    { icon: <DocIcon />, title: 'Frameworks', desc: 'Browse supported frameworks', path: '/frameworks', color: '#A6A9D0' },
+    { icon: <InfoIcon />, title: 'About', desc: 'Learn about AIComplianceGuard', path: '/about', color: '#E5AEA9' },
   ]
 
   const getRiskColor = (level) => {

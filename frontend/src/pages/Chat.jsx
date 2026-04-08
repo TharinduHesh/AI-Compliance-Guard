@@ -286,20 +286,10 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, collapsed
         display: 'flex', alignItems: 'center', gap: 10,
         position: 'relative',
       }}>
-        <div style={{
-          width: 32, height: 32, borderRadius: '50%',
-          backgroundColor: '#1e40af', display: 'flex',
-          alignItems: 'center', justifyContent: 'center',
-          color: 'white', fontSize: 13, fontWeight: 700, flexShrink: 0,
-        }}>
-          {(user?.company_id || 'U')[0].toUpperCase()}
-        </div>
         <div style={{ flex: 1, overflow: 'hidden' }}>
-          <div style={{ color: t.text, fontSize: 13, fontWeight: 500,
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {user?.company_name || user?.company_id || 'User'}
+          <div style={{ color: t.textMuted, fontSize: 12, fontWeight: 500 }}>
+            Account details are available on Dashboard
           </div>
-          <div style={{ color: t.textMuted, fontSize: 11 }}>{user?.company_id}</div>
         </div>
 
         {isUserRole && (
@@ -491,8 +481,10 @@ function TypingIndicator({ t }) {
 /* ── Welcome screen (centered like ChatGPT) ───────────────────── */
 function WelcomeScreen({ onSend, t, isDark }) {
   const logoSrc = isDark ? '/Logo.png' : '/IMAGE%204.png'
-  const welcomeLogoSize = isDark ? 240 : 320
-  const logoBottomGap = isDark ? 0 : -64
+  const welcomeLogoSize = isDark
+    ? 'clamp(150px, 24vh, 240px)'
+    : 'clamp(180px, 28vh, 300px)'
+  const logoBottomGap = isDark ? '0px' : 'clamp(-56px, -4vh, -22px)'
   const suggestions = [
     { icon: '📋', title: 'What is ISO 27001?', desc: 'Information security standards' },
     { icon: '🛡️', title: 'Explain the CIA triad', desc: 'Confidentiality, Integrity, Availability' },
@@ -503,7 +495,7 @@ function WelcomeScreen({ onSend, t, isDark }) {
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center', flex: 1, padding: 40,
+      justifyContent: 'center', flex: 1, padding: 'clamp(14px, 3.6vh, 40px) 24px',
     }}>
       <img src={logoSrc} alt="AI Compliance Guard" style={{
         width: welcomeLogoSize, height: welcomeLogoSize, borderRadius: 24,
@@ -515,13 +507,13 @@ function WelcomeScreen({ onSend, t, isDark }) {
       }} />
 
       <h1 style={{
-        fontSize: 30, fontWeight: 700, color: t.textHeading,
-        marginBottom: 8, textAlign: 'center', marginTop: 0,
+        fontSize: 'clamp(24px, 3.2vh, 30px)', fontWeight: 700, color: t.textHeading,
+        marginBottom: 'clamp(6px, 1.2vh, 10px)', textAlign: 'center', marginTop: 0,
       }}>AI Compliance Guard</h1>
 
       <p style={{
-        color: t.textSecondary, fontSize: 16, textAlign: 'center',
-        maxWidth: 520, lineHeight: 1.6, marginBottom: 40,
+        color: t.textSecondary, fontSize: 'clamp(14px, 1.8vh, 16px)', textAlign: 'center',
+        maxWidth: 520, lineHeight: 1.55, marginBottom: 'clamp(14px, 3.2vh, 40px)',
       }}>
         Upload a compliance document and I'll analyze it against ISO 27001, ISO 9001,
         NIST CSF, or GDPR. I'll find gaps, weak policies, and give you actionable improvements.
@@ -529,14 +521,14 @@ function WelcomeScreen({ onSend, t, isDark }) {
 
       <div style={{
         display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)',
-        gap: 12, maxWidth: 560, width: '100%',
+        gap: 'clamp(8px, 1.4vh, 12px)', maxWidth: 560, width: '100%',
       }}>
         {suggestions.map(s => (
           <button
             key={s.title}
             onClick={() => onSend(s.title)}
             style={{
-              padding: 16, backgroundColor: t.bgWelcome,
+              padding: 'clamp(10px, 1.7vh, 16px)', backgroundColor: t.bgWelcome,
               border: `1px solid ${t.borderLight}`, borderRadius: 12,
               cursor: 'pointer', textAlign: 'left',
               transition: 'all 0.15s', color: t.text,
@@ -550,7 +542,7 @@ function WelcomeScreen({ onSend, t, isDark }) {
               e.currentTarget.style.backgroundColor = t.bgWelcome
             }}
           >
-            <div style={{ fontSize: 22, marginBottom: 6 }}>{s.icon}</div>
+            <div style={{ fontSize: 'clamp(18px, 2.5vh, 22px)', marginBottom: 6 }}>{s.icon}</div>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{s.title}</div>
             <div style={{ fontSize: 12, color: t.textMuted }}>{s.desc}</div>
           </button>
@@ -868,7 +860,7 @@ function SettingsModal({ open, onClose, autoDelete, onChangeAutoDelete, onDelete
         <span style={{
           fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 6,
           backgroundColor: isDark ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.08)',
-          color: isDark ? '#a78bfa' : '#6366f1',
+          color: isDark ? '#A6A9D0' : '#35627A',
         }}>Free</span>
       </SettingRow>
     </div>
@@ -1548,7 +1540,7 @@ export default function Chat({ onLogout }) {
                   ? (isDark ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.08)')
                   : (isDark ? 'rgba(100,116,139,0.15)' : 'rgba(100,116,139,0.1)'),
                 color: llmStatus.available
-                  ? (isDark ? '#a78bfa' : '#6366f1')
+                  ? (isDark ? '#A6A9D0' : '#35627A')
                   : t.textMuted,
               }}
             >

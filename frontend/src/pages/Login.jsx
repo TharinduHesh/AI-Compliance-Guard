@@ -1,5 +1,4 @@
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { authAPI } from '../services/api'
 import { useTheme } from '../ThemeContext'
 
@@ -10,7 +9,6 @@ import { useTheme } from '../ThemeContext'
 
 export default function Login({ onAuth }) {
   const { theme: t, isDark, toggle: toggleTheme } = useTheme()
-  const navigate = useNavigate()
 
   const [companyId, setCompanyId] = useState('')
   const [password, setPassword] = useState('')
@@ -59,13 +57,6 @@ export default function Login({ onAuth }) {
       }
 
       onAuth && onAuth()
-
-      // Redirect admin to admin dashboard, users to chat
-      if (role === 'admin') {
-        navigate('/admin', { replace: true })
-      } else {
-        navigate('/chat', { replace: true })
-      }
     } catch (err) {
       const msg = err?.response?.data?.detail
       if (msg) setError(typeof msg === 'string' ? msg : JSON.stringify(msg))

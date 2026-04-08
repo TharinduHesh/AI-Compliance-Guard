@@ -115,8 +115,9 @@ async def upload_and_ask(
         # Save permanent copy for admin viewing
         uploads_dir = _safe_join(Path(settings.USER_UPLOADS_DIR), safe_user_id)
         uploads_dir.mkdir(parents=True, exist_ok=True)
-        ts_prefix = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        perm_path = _safe_join(uploads_dir, f"{ts_prefix}_{safe_filename}")
+        ts_prefix = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+        unique_suffix = secrets.token_hex(3)
+        perm_path = _safe_join(uploads_dir, f"{ts_prefix}_{unique_suffix}_{safe_filename}")
         with open(perm_path, 'wb') as f:
             f.write(file_data)
 
@@ -197,8 +198,9 @@ async def upload_document_to_chat(
         # Save permanent copy for admin viewing
         uploads_dir = _safe_join(Path(settings.USER_UPLOADS_DIR), safe_user_id)
         uploads_dir.mkdir(parents=True, exist_ok=True)
-        ts_prefix = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        perm_path = _safe_join(uploads_dir, f"{ts_prefix}_{safe_filename}")
+        ts_prefix = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+        unique_suffix = secrets.token_hex(3)
+        perm_path = _safe_join(uploads_dir, f"{ts_prefix}_{unique_suffix}_{safe_filename}")
         with open(perm_path, 'wb') as f:
             f.write(file_data)
 

@@ -15,6 +15,8 @@ import logging
 from datetime import datetime
 from pathlib import Path
 import secrets
+import os
+import re
 
 from app.models.schemas import (
     DocumentUploadResponse,
@@ -31,6 +33,22 @@ router = APIRouter()
 
 # ── In-memory file-id → path map (simple; production would use DB) ───
 _uploaded_files: Dict[str, Dict] = {}
+
+
+def _sanitize_path_part(value: str, fallback: str = "item") -> str:
+    raw = (value or "").strip()
+    raw = Path(raw).name
+    cleaned = re.sub(r"[^A-Za-z0-9._@-]", "_", raw)
+    cleaned = cleaned.strip("._-")
+    return cleaned[:120] if cleaned else fallback
+
+
+def _safe_join(base_dir: Path, *parts: str) -> Path:
+    base = base_dir.resolve()
+    target = (base / Path(*parts)).resolve()
+    if target != base and not str(target).startswith(str(base) + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    return target
 
 
 @router.post("/upload", response_model=DocumentUploadResponse)
@@ -81,6 +99,17 @@ async def upload_document(file: UploadFile = File(...), token_data: dict = Depen
             )
         except Exception as e:
             logger.warning(f"Firebase audit log failed: {e}")
+
+        # Save a user-scoped permanent copy so Admin Dashboard can list all uploads.
+        safe_user_id = _sanitize_path_part(user_id, "user")
+        safe_filename = _sanitize_path_part(file.filename, "document")
+        uploads_dir = _safe_join(Path(settings.USER_UPLOADS_DIR), safe_user_id)
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        ts_prefix = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+        unique_suffix = secrets.token_hex(3)
+        perm_path = _safe_join(uploads_dir, f"{ts_prefix}_{unique_suffix}_{safe_filename}")
+        with open(perm_path, "wb") as f:
+            f.write(file_data)
 
         # Map file_id → path so /analyze can retrieve the file
         file_id = secrets.token_urlsafe(16)

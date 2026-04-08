@@ -10,23 +10,23 @@ const theme = createTheme({
   palette: {
     mode: 'dark',
     primary: {
-      main: '#1e3a8a', // Navy blue
-      dark: '#0f2556',
-      light: '#3b5ba5',
+      main: '#35627A',
+      dark: '#2b5165',
+      light: '#4a7288',
       contrastText: '#ffffff',
     },
     secondary: {
-      main: '#2563eb', // Lighter blue
-      dark: '#1e40af',
-      light: '#3b82f6',
-      contrastText: '#ffffff',
+      main: '#B46258',
+      dark: '#9f554c',
+      light: '#c17870',
+      contrastText: '#f5f5f5',
     },
     success: {
-      main: '#10b981',
+      main: '#8E9A98',
       contrastText: '#ffffff',
     },
     warning: {
-      main: '#f59e0b',
+      main: '#E5AEA9',
       contrastText: '#ffffff',
     },
     error: {
@@ -34,7 +34,7 @@ const theme = createTheme({
       contrastText: '#ffffff',
     },
     info: {
-      main: '#3b82f6',
+      main: '#A6A9D0',
       contrastText: '#ffffff',
     },
     background: {
@@ -65,7 +65,7 @@ const theme = createTheme({
     MuiAppBar: {
       styleOverrides: {
         root: {
-          backgroundColor: '#1e3a8a',
+          backgroundColor: '#35627A',
           color: '#ffffff',
         },
       },
