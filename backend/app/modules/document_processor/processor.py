@@ -198,9 +198,8 @@ class DocumentProcessor:
         """
         # Common section patterns in compliance documents
         section_patterns = [
-            r'(?i)^\s*\d+\.?\s+[A-Z][^\n]*',  # Numbered sections (1. Introduction)
-            r'(?i)^\s*[A-Z][^\n]*\s*$',        # All caps headers
-            r'(?i)^(purpose|scope|policy|procedure|responsibility|definitions|references)',
+            r'^\s*\d+(?:\.\d+){0,3}\.?\s+[A-Z][^\n]*$',
+            r'(?i)^\s*(purpose|scope|policy|procedure|responsibility|responsibilities|definitions|references|context|leadership|planning|support|operation|performance|improvement)\b[^\n]*$',
         ]
         
         sections = []
@@ -209,25 +208,40 @@ class DocumentProcessor:
         lines = text.split('\n')
         
         for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                current_section['content'] += '\n'
+                continue
+
             is_header = False
             
             # Check if line matches section pattern
             for pattern in section_patterns:
-                if re.match(pattern, line.strip()):
+                if re.match(pattern, stripped):
                     # Save previous section
                     if current_section['content'].strip():
                         sections.append(current_section)
                     
                     # Start new section
                     current_section = {
-                        'header': line.strip(),
+                        'header': stripped,
                         'content': ''
                     }
                     is_header = True
                     break
+
+            # Heuristic uppercase heading detection (short title-like lines only)
+            if not is_header and self._is_probable_uppercase_header(stripped):
+                if current_section['content'].strip():
+                    sections.append(current_section)
+                current_section = {
+                    'header': stripped,
+                    'content': ''
+                }
+                is_header = True
             
             if not is_header:
-                current_section['content'] += line + '\n'
+                current_section['content'] += stripped + '\n'
         
         # Add last section
         if current_section['content'].strip():
@@ -246,6 +260,7 @@ class DocumentProcessor:
             List of individual clauses
         """
         clauses = []
+        seen = set()
         
         for section in sections:
             content = section['content']
@@ -253,15 +268,21 @@ class DocumentProcessor:
             # Split by common clause delimiters:
             # bullet points, numbered lists, sentences, or paragraph breaks
             clause_texts = re.split(
-                r'\n\s*[-•]\s*|\n\s*\d+\.\s*|\.\s+(?=[A-Z])|\n{2,}',
+                r'\n\s*[-•]\s+|\n\s*\d+(?:\.\d+)*[.)]\s+|(?<=[.!?;:])\s+(?=[A-Z])|\n{2,}',
                 content
             )
             
             for clause_text in clause_texts:
                 clause_text = clause_text.strip()
+                clause_text = re.sub(r'\s+', ' ', clause_text)
+                clause_text = re.sub(r'^\s*(page\s+\d+\s+of\s+\d+|\d+)\s*$', '', clause_text, flags=re.IGNORECASE)
                 
-                # Only include meaningful clauses (min 15 characters)
-                if len(clause_text) > 15:
+                # Only include meaningful clauses (min length + token count)
+                if len(clause_text) > 35 and len(clause_text.split()) >= 6:
+                    fingerprint = clause_text.lower()
+                    if fingerprint in seen:
+                        continue
+                    seen.add(fingerprint)
                     clauses.append({
                         'section': section['header'],
                         'text': clause_text,
@@ -309,15 +330,28 @@ class DocumentProcessor:
         clauses = self.extract_clauses(sections)
         
         # Fallback: if no clauses found, split by sentences
-        if not clauses and cleaned_text.strip():
-            logger.info("No clauses from section parser — falling back to sentence split")
+        if len(clauses) < 8 and cleaned_text.strip():
+            logger.info("Low clause count from section parser — augmenting with sentence split")
             sentences = re.split(r'(?<=[.!?])\s+', cleaned_text)
             for i, s in enumerate(sentences):
                 s = s.strip()
-                if len(s) > 20:
+                s = re.sub(r'\s+', ' ', s)
+                if len(s) > 50 and len(s.split()) >= 8:
                     clauses.append({'section': f'Paragraph {i+1}', 'text': s, 'length': len(s)})
             if not sections:
                 sections = [{'header': 'Document Content', 'content': cleaned_text}]
+
+        # Final dedupe pass while preserving order
+        unique_clauses = []
+        seen_text = set()
+        for c in clauses:
+            key = c.get('text', '').strip().lower()
+            if not key or key in seen_text:
+                continue
+            seen_text.add(key)
+            unique_clauses.append(c)
+
+        clauses = unique_clauses
         
         logger.info(f"Document processed: {len(sections)} sections, {len(clauses)} clauses")
         
@@ -331,6 +365,26 @@ class DocumentProcessor:
             'clauses': clauses,
             'processed_at': datetime.utcnow().isoformat()
         }
+
+    def _is_probable_uppercase_header(self, line: str) -> bool:
+        """Detect true uppercase headings while avoiding normal sentence lines."""
+        if not line or len(line) > 90:
+            return False
+
+        # Must contain alphabetic characters.
+        letters = [ch for ch in line if ch.isalpha()]
+        if len(letters) < 4:
+            return False
+
+        upper_ratio = sum(1 for ch in letters if ch.isupper()) / len(letters)
+        if upper_ratio < 0.8:
+            return False
+
+        # Avoid lines that look like full sentences.
+        if line.endswith('.'):
+            return False
+
+        return True
 
 
 # Singleton instance

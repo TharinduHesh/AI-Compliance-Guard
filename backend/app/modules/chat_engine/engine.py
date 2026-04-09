@@ -249,7 +249,7 @@ class ComplianceChatEngine:
     # ------------------------------------------------------------------
     # Core chat handler
     # ------------------------------------------------------------------
-    def chat(self, conversation_id: str, user_message: str) -> str:
+    def chat(self, conversation_id: str, user_message: str, user_id: Optional[str] = None) -> str:
         """
         Process a user message and return an AI response.
         """
@@ -265,7 +265,7 @@ class ComplianceChatEngine:
         })
 
         # Determine intent and generate response
-        response_text = self._generate_response(conv, user_message)
+        response_text = self._generate_response(conv, user_message, user_id=user_id)
 
         # Store assistant message
         conv['messages'].append({
@@ -279,7 +279,7 @@ class ComplianceChatEngine:
     # ------------------------------------------------------------------
     # Intent detection & response generation
     # ------------------------------------------------------------------
-    def _generate_response(self, conv: Dict, message: str) -> str:
+    def _generate_response(self, conv: Dict, message: str, user_id: Optional[str] = None) -> str:
         msg_lower = message.lower().strip()
 
         # Greeting
@@ -303,12 +303,13 @@ class ComplianceChatEngine:
                         context_info="The user has NOT uploaded a compliance document yet. "
                                      "Answer their question naturally. If it relates to compliance, "
                                      "mention they can upload a document for detailed analysis.",
+                        user_key=user_id,
                     )
                 except Exception as e:
                     logger.error(f"LLM error (no-doc chat): {e}")
             # LLM not available — rule-based fallback
             if self._is_general_question(msg_lower):
-                return self._answer_general_question(msg_lower)
+                return self._answer_general_question(msg_lower, user_id=user_id)
             return self._no_document_response()
 
         # Document-aware intents
@@ -333,13 +334,13 @@ class ComplianceChatEngine:
             return self._improvements_response(conv)
 
         if self._wants_summary(msg_lower):
-            return self._document_summary_response(conv)
+            return self._document_summary_response(conv, user_id=user_id)
 
         if self._is_general_question(msg_lower):
-            return self._answer_general_question(msg_lower)
+            return self._answer_general_question(msg_lower, user_id=user_id)
 
         # Default: try LLM-powered contextual answer, then rule-based fallback
-        return self._contextual_answer(conv, message)
+        return self._contextual_answer(conv, message, user_id=user_id)
 
     # ------------------------------------------------------------------
     # Intent detectors
@@ -474,7 +475,7 @@ class ComplianceChatEngine:
             "I do not answer non-compliance questions outside AIComplianceGuard scope."
         )
 
-    def _document_summary_response(self, conv: Dict) -> str:
+    def _document_summary_response(self, conv: Dict, user_id: Optional[str] = None) -> str:
         # Use LLM for a rich summary if available
         if self.llm is not None:
             context_info = self._build_document_context(conv)
@@ -483,6 +484,7 @@ class ComplianceChatEngine:
                     messages=[{"role": "user", "content": "Give me a comprehensive summary of this document. Include the main topics, key policies, and any compliance-relevant sections."}],
                     context_info=context_info,
                     max_tokens=4096,
+                    user_key=user_id,
                 )
             except Exception as e:
                 logger.error(f"LLM summary error: {e}")
@@ -800,7 +802,7 @@ class ComplianceChatEngine:
 
         return recs
 
-    def _answer_general_question(self, msg: str) -> str:
+    def _answer_general_question(self, msg: str, user_id: Optional[str] = None) -> str:
         """Answer general compliance questions — LLM or canned responses."""
         # ── Try LLM for open-ended questions ──
         if self.llm is not None:
@@ -809,6 +811,7 @@ class ComplianceChatEngine:
                     messages=[{"role": "user", "content": msg}],
                     context_info="The user has NOT uploaded a document yet. Answer the general compliance question.",
                     max_tokens=512,
+                    user_key=user_id,
                 )
             except Exception as e:
                 logger.error(f"LLM general-question error: {e}")
@@ -896,7 +899,7 @@ class ComplianceChatEngine:
             "Ask me about any of these, or upload a document for detailed analysis!"
         )
 
-    def _contextual_answer(self, conv: Dict, message: str) -> str:
+    def _contextual_answer(self, conv: Dict, message: str, user_id: Optional[str] = None) -> str:
         """Try LLM first with full document context, then fall back to keyword matching."""
         clauses = conv.get('document_clauses', [])
 
@@ -916,6 +919,7 @@ class ComplianceChatEngine:
                     messages=llm_messages,
                     context_info=context_info,
                     max_tokens=4096,
+                    user_key=user_id,
                 )
             except Exception as e:
                 logger.error(f"LLM generation error: {e}")
@@ -937,7 +941,7 @@ class ComplianceChatEngine:
 
         # ── Rule-based fallback ──
         if not clauses:
-            return self._answer_general_question(message.lower())
+            return self._answer_general_question(message.lower(), user_id=user_id)
 
         if not top_clauses:
             return (

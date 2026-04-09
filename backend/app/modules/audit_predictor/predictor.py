@@ -138,47 +138,70 @@ class AuditRiskPredictor:
         Returns:
             Risk prediction with confidence scores
         """
-        if self.model is None or self.scaler is None:
-            logger.error("Model not initialized")
-            return {
-                'error': 'Model not available',
-                'risk_level': 'Unknown'
-            }
-        
-        # Extract features
-        features = self.extract_features(analysis_results)
-        
-        # Scale features
-        features_scaled = self.scaler.transform(features)
-        
-        # Predict
-        prediction = self.model.predict(features_scaled)[0]
-        probabilities = self.model.predict_proba(features_scaled)[0]
-        
-        risk_level = self.risk_levels[prediction]
-        confidence = probabilities[prediction] * 100
-        
-        # Get feature importances
-        feature_names = [
-            'Missing Controls',
-            'CIA Imbalance',
-            'Weak Statements',
-            'Coverage Percentage'
-        ]
-        
+        # Deterministic normalized scoring produces more stable and explainable output
+        # than the synthetic demonstration model.
+        missing_controls = max(float(analysis_results.get('missing_controls_count', 0)), 0.0)
+        total_controls = max(float(analysis_results.get('total_controls', 1)), 1.0)
+        missing_ratio = min(missing_controls / total_controls, 1.0)
+
+        weak_clauses_count = len(analysis_results.get('weak_clauses', []))
+        total_clauses = max(float(analysis_results.get('total_clauses', 1)), 1.0)
+        weak_ratio = min(float(weak_clauses_count) / total_clauses, 1.0)
+
+        coverage_pct = float(analysis_results.get('compliance_percentage', 0.0))
+        coverage_gap = min(max((100.0 - coverage_pct) / 100.0, 0.0), 1.0)
+
+        cia_balance = analysis_results.get('cia_balance_index', None)
+        if cia_balance is None:
+            cia_penalty = 0.0
+        else:
+            cia_penalty = min(max((60.0 - float(cia_balance)) / 60.0, 0.0), 1.0)
+
+        weighted_risk = (
+            (0.40 * missing_ratio)
+            + (0.30 * coverage_gap)
+            + (0.20 * weak_ratio)
+            + (0.10 * cia_penalty)
+        )
+        risk_index = round(weighted_risk * 100, 2)
+
+        if risk_index >= 67:
+            risk_level = 'High Risk'
+            risk_score = 2
+        elif risk_index >= 40:
+            risk_level = 'Medium Risk'
+            risk_score = 1
+        else:
+            risk_level = 'Low Risk'
+            risk_score = 0
+
+        # Soft probability distribution around deterministic risk index.
+        p_high = max(0.0, min(1.0, (risk_index - 35) / 65))
+        p_low = max(0.0, min(1.0, (70 - risk_index) / 70))
+        p_medium = max(0.0, 1.0 - max(p_low, p_high))
+        total_p = p_low + p_medium + p_high
+        if total_p == 0:
+            p_low, p_medium, p_high = 0.33, 0.34, 0.33
+        else:
+            p_low, p_medium, p_high = p_low / total_p, p_medium / total_p, p_high / total_p
+
+        confidence = max(p_low, p_medium, p_high) * 100
+
         feature_contributions = {
-            name: float(features[0][i])
-            for i, name in enumerate(feature_names)
+            'Missing Controls': round(missing_ratio * 100, 2),
+            'CIA Imbalance': round(cia_penalty * 100, 2),
+            'Weak Statements': round(weak_ratio * 100, 2),
+            'Coverage Percentage': round(coverage_pct, 2),
         }
-        
+
         return {
             'risk_level': risk_level,
             'confidence': round(confidence, 2),
-            'risk_score': int(prediction),  # 0=Low, 1=Medium, 2=High
+            'risk_score': risk_score,
             'probability_distribution': {
-                'Low Risk': round(probabilities[0] * 100, 2),
-                'Medium Risk': round(probabilities[1] * 100, 2),
-                'High Risk': round(probabilities[2] * 100, 2)
+                'Low Risk': round(p_low * 100, 2),
+                'Medium Risk': round(p_medium * 100, 2),
+                'High Risk': round(p_high * 100, 2)
             },
             'feature_contributions': feature_contributions,
             'recommendations': self._generate_risk_recommendations(risk_level, feature_contributions)
@@ -248,7 +271,7 @@ class AuditRiskPredictor:
         except Exception as e:
             logger.error(f"Failed to save model: {str(e)}")
     
-    def get_audit_readiness_score(self, risk_prediction: Dict[str, any]) -> Dict[str, any]:
+    def get_audit_readiness_score(self, risk_prediction: Dict[str, any], analysis_context: Dict[str, any] = None) -> Dict[str, any]:
         """
         Calculate audit readiness score (0-100)
         
@@ -266,12 +289,25 @@ class AuditRiskPredictor:
             probabilities.get('Medium Risk', 0) * 0.5 +
             probabilities.get('High Risk', 0) * 0.0
         )
+
+        # Apply conservative penalties based on real analysis signals.
+        analysis_context = analysis_context or {}
+        structural_score = float(analysis_context.get('structural_score', 0.0))
+        compliance_percentage = float(analysis_context.get('compliance_percentage', 0.0))
+        missing_critical_count = int(analysis_context.get('missing_critical_count', 0) or 0)
+
+        readiness_score -= max(0.0, (70.0 - structural_score) * 0.45)
+        readiness_score -= max(0.0, (85.0 - compliance_percentage) * 0.30)
+        readiness_score -= min(20.0, missing_critical_count * 3.0)
+        readiness_score = max(0.0, min(100.0, readiness_score))
+
+        risk_level = risk_prediction.get('risk_level', 'Unknown')
         
-        if readiness_score >= 80:
+        if readiness_score >= 85 and risk_level == 'Low Risk' and missing_critical_count == 0 and structural_score >= 75:
             readiness_level = "Audit Ready"
-        elif readiness_score >= 60:
+        elif readiness_score >= 65:
             readiness_level = "Mostly Ready"
-        elif readiness_score >= 40:
+        elif readiness_score >= 45:
             readiness_level = "Preparing"
         else:
             readiness_level = "Not Ready"

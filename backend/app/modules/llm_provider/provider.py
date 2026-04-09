@@ -14,6 +14,7 @@ For Llama: auto-downloads the model on first run if LLAMA_MODEL_PATH is empty.
 import logging
 import os
 import time
+import hashlib
 from pathlib import Path
 from typing import Optional, List, Dict
 
@@ -71,6 +72,7 @@ class LLMProvider:
         self._tokenizer = None
         self._pipeline = None
         self._gemini_model = None
+        self._gemini_clients = []
         self._is_loaded = False
 
         if self.provider == "none":
@@ -148,15 +150,26 @@ class LLMProvider:
                 "Run:  pip install google-genai"
             )
 
-        api_key = settings.GEMINI_API_KEY
-        if not api_key:
+        key_candidates = [
+            (settings.GEMINI_API_KEY or "").strip(),
+            (settings.GEMINI_API_KEY_SECONDARY or "").strip(),
+        ]
+        api_keys = []
+        for k in key_candidates:
+            if k and k not in api_keys:
+                api_keys.append(k)
+
+        if not api_keys:
             raise RuntimeError(
-                "GEMINI_API_KEY is not set. Add it to your .env file."
+                "No Gemini API key is configured. Add GEMINI_API_KEY (and optionally GEMINI_API_KEY_SECONDARY) to your .env file."
             )
 
-        self._gemini_client = genai.Client(api_key=api_key)
+        self._gemini_clients = [genai.Client(api_key=key) for key in api_keys]
         self._is_loaded = True
-        logger.info(f"Gemini client initialised (model: {settings.GEMINI_MODEL})")
+        logger.info(
+            f"Gemini client pool initialised with {len(self._gemini_clients)} key(s) "
+            f"(model: {settings.GEMINI_MODEL})"
+        )
 
     def _load_llama_cpp(self):
         """Load model via llama-cpp-python."""
@@ -225,6 +238,7 @@ class LLMProvider:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         context_info: str = "",
+        user_key: Optional[str] = None,
     ) -> str:
         """
         Generate a response from the Llama model.
@@ -255,7 +269,7 @@ class LLMProvider:
             temp = temperature or settings.LLAMA_TEMPERATURE
 
         if self.provider == "gemini":
-            return self._generate_gemini(full_system, messages, max_tok, temp)
+            return self._generate_gemini(full_system, messages, max_tok, temp, user_key=user_key)
         elif self.provider == "llama_cpp":
             return self._generate_llama_cpp(full_system, messages, max_tok, temp)
         elif self.provider == "transformers":
@@ -269,6 +283,7 @@ class LLMProvider:
         messages: List[Dict[str, str]],
         max_tokens: int,
         temperature: float,
+        user_key: Optional[str] = None,
     ) -> str:
         """Generate response using Google Gemini API (google-genai SDK)."""
         from google.genai import types
@@ -296,34 +311,65 @@ class LLMProvider:
             if fb != settings.GEMINI_MODEL:
                 models_to_try.append(fb)
 
+        client_sequence = self._select_gemini_client_sequence(user_key)
+
         last_exc = None
-        for model_name in models_to_try:
-            for attempt in range(3):
-                try:
-                    response = self._gemini_client.models.generate_content(
-                        model=model_name,
-                        contents=contents,
-                        config=config,
-                    )
-                    if model_name != settings.GEMINI_MODEL:
-                        logger.info(f"Used fallback model: {model_name}")
-                    return response.text.strip()
-                except Exception as e:
-                    last_exc = e
-                    err_str = str(e).lower()
-                    if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
-                        wait = (attempt + 1) * 3
-                        logger.warning(
-                            f"Gemini rate-limited on {model_name} (attempt {attempt+1}/3). "
-                            f"Retrying in {wait}s..."
+        for client_idx in client_sequence:
+            client = self._gemini_clients[client_idx]
+            for model_name in models_to_try:
+                for attempt in range(3):
+                    try:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=config,
                         )
-                        time.sleep(wait)
-                    else:
+                        if model_name != settings.GEMINI_MODEL:
+                            logger.info(f"Used fallback model: {model_name}")
+                        return response.text.strip()
+                    except Exception as e:
+                        last_exc = e
+                        err_str = str(e).lower()
+                        if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
+                            wait = (attempt + 1) * 3
+                            logger.warning(
+                                f"Gemini rate-limited on key#{client_idx + 1} model {model_name} "
+                                f"(attempt {attempt+1}/3). Retrying in {wait}s..."
+                            )
+                            time.sleep(wait)
+                            continue
+                        if "401" in err_str or "api key" in err_str or "permission" in err_str or "unauthorized" in err_str:
+                            logger.warning(f"Gemini auth error on key#{client_idx + 1}. Trying next key.")
+                            break
                         raise
-            # All retries exhausted for this model, try next fallback
-            logger.warning(f"Model {model_name} quota exhausted, trying next fallback...")
+                else:
+                    # Retry loop exhausted for this model, try next model.
+                    logger.warning(f"Model {model_name} exhausted on key#{client_idx + 1}, trying next fallback model...")
+                    continue
+                # Non-retryable auth error hit: switch key immediately.
+                break
 
         raise RuntimeError(f"All Gemini models failed after retries: {last_exc}")
+
+    def _select_gemini_client_sequence(self, user_key: Optional[str]) -> List[int]:
+        """Select preferred Gemini key for a user, with remaining keys as fallbacks."""
+        total = len(self._gemini_clients)
+        if total <= 1:
+            return [0] if total == 1 else []
+
+        mode = (settings.GEMINI_KEY_SELECTION_MODE or "hash").strip().lower()
+        if mode == "primary":
+            preferred = 0
+        else:
+            stable_key = (user_key or "anonymous").strip().lower() or "anonymous"
+            digest = hashlib.sha256(stable_key.encode("utf-8")).hexdigest()
+            preferred = int(digest[:8], 16) % total
+
+        order = [preferred]
+        for idx in range(total):
+            if idx != preferred:
+                order.append(idx)
+        return order
 
     def _generate_llama_cpp(
         self,

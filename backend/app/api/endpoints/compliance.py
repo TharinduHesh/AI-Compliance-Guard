@@ -17,6 +17,7 @@ from pathlib import Path
 import secrets
 import os
 import re
+import json
 
 from app.models.schemas import (
     DocumentUploadResponse,
@@ -27,12 +28,44 @@ from app.modules.security_layer import security_layer
 from app.modules.hybrid_pipeline import hybrid_pipeline
 from app.modules.firebase_storage import firebase_storage
 from app.api.endpoints.auth import verify_token, record_activity
+from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # ── In-memory file-id → path map (simple; production would use DB) ───
 _uploaded_files: Dict[str, Dict] = {}
+_upload_index_file = Path(settings.TEMP_UPLOAD_DIR) / ".upload_index.json"
+
+
+def _load_upload_index() -> Dict[str, Dict]:
+    """Load persisted upload index so analysis survives API reloads."""
+    try:
+        if not _upload_index_file.exists():
+            return {}
+
+        with open(_upload_index_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if isinstance(data, dict):
+            return data
+        return {}
+    except Exception as e:
+        logger.warning(f"Failed to load upload index: {e}")
+        return {}
+
+
+def _save_upload_index():
+    """Persist upload index to disk."""
+    try:
+        _upload_index_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(_upload_index_file, "w", encoding="utf-8") as f:
+            json.dump(_uploaded_files, f)
+    except Exception as e:
+        logger.warning(f"Failed to save upload index: {e}")
+
+
+_uploaded_files.update(_load_upload_index())
 
 
 def _sanitize_path_part(value: str, fallback: str = "item") -> str:
@@ -119,6 +152,7 @@ async def upload_document(file: UploadFile = File(...), token_data: dict = Depen
             "hash": file_hash,
             "size": len(file_data),
         }
+        _save_upload_index()
 
         return DocumentUploadResponse(
             file_id=file_id,
@@ -159,38 +193,40 @@ async def analyze_compliance(request: ComplianceAnalysisRequest, token_data: dic
         # Resolve the uploaded file
         file_info = _uploaded_files.get(request.file_id)
 
-        if file_info and Path(file_info["path"]).exists():
-            # ── Real document path ────────────────────────────────
-            result = hybrid_pipeline.run(
-                file_path=file_info["path"],
-                frameworks=request.frameworks,
-                include_cia=request.include_cia,
-                file_name=file_info["name"],
+        # Refresh from persisted index if this process restarted.
+        if not file_info:
+            _uploaded_files.update(_load_upload_index())
+            file_info = _uploaded_files.get(request.file_id)
+
+        if not file_info:
+            raise HTTPException(
+                status_code=404,
+                detail="Uploaded file session not found. Please upload the document again.",
             )
-        else:
-            # ── Fallback: demo clauses (when file expired / not found) ─
-            logger.warning("File not found; using demo clauses")
-            demo_clauses = [
-                {"text": "The organization shall establish, implement, maintain and continually improve an information security management system.", "section": "4"},
-                {"text": "Top management shall demonstrate leadership and commitment with respect to the information security management system.", "section": "5"},
-                {"text": "The organization shall define and apply an information security risk assessment process.", "section": "6.1.2"},
-                {"text": "The organization shall implement an information security risk treatment plan.", "section": "6.1.3"},
-                {"text": "Information security objectives shall be established at relevant functions and levels.", "section": "6.2"},
-                {"text": "The organization shall determine the competence of persons doing work that affects information security performance.", "section": "7.2"},
-                {"text": "Access to information and information processing facilities shall be restricted.", "section": "A.9"},
-                {"text": "Cryptographic controls shall be implemented to protect information confidentiality and integrity.", "section": "A.10"},
-                {"text": "Data backups must be performed daily and stored securely offsite.", "section": "A.12"},
-                {"text": "Incident response procedures must be documented and tested annually.", "section": "A.16"},
-                {"text": "Business continuity plans shall be developed, maintained and tested.", "section": "A.17"},
-                {"text": "All applicable legal and regulatory requirements shall be identified and documented.", "section": "A.18"},
-            ]
-            result = hybrid_pipeline.run(
-                clauses=demo_clauses,
-                full_text=" ".join(c["text"] for c in demo_clauses),
-                frameworks=request.frameworks,
-                include_cia=request.include_cia,
-                file_name=f"document_{request.file_id}",
+
+        file_path = Path(file_info.get("path", ""))
+        if not file_path.exists():
+            _uploaded_files.pop(request.file_id, None)
+            _save_upload_index()
+            raise HTTPException(
+                status_code=410,
+                detail="Uploaded file is no longer available. Please upload and analyze again.",
             )
+
+        expected_hash = file_info.get("hash")
+        if expected_hash and not security_layer.verify_integrity(str(file_path), expected_hash):
+            raise HTTPException(
+                status_code=400,
+                detail="File integrity verification failed. Please upload the document again.",
+            )
+
+        # ── Real document path ────────────────────────────────
+        result = hybrid_pipeline.run(
+            file_path=str(file_path),
+            frameworks=request.frameworks,
+            include_cia=request.include_cia,
+            file_name=file_info["name"],
+        )
 
         logger.info(f"Hybrid analysis completed: {result['analysis_id']}")
 

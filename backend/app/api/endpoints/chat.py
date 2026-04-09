@@ -58,7 +58,7 @@ async def send_message(request: ChatMessageRequest, token_data: dict = Depends(v
             chat_engine.create_conversation(conv_id)
 
         # Get AI response
-        response_text = chat_engine.chat(conv_id, request.message)
+        response_text = chat_engine.chat(conv_id, request.message, user_id=user_id)
 
         return ChatMessageResponse(
             conversation_id=conv_id,
@@ -137,7 +137,7 @@ async def upload_and_ask(
             )
 
         # Process the user question
-        response_text = chat_engine.chat(conv_id, effective_message)
+        response_text = chat_engine.chat(conv_id, effective_message, user_id=user_id)
 
         # Clean up temp file
         try:
@@ -213,7 +213,7 @@ async def upload_document_to_chat(
             pass
 
         # Auto-generate a welcome message for the document
-        welcome = chat_engine.chat(conv_id, "Give me a summary of this document")
+        welcome = chat_engine.chat(conv_id, "Give me a summary of this document", user_id=user_id)
 
         record_activity(user_id, "upload", f"Uploaded {file.filename}")
 
@@ -264,7 +264,8 @@ async def new_conversation(token_data: dict = Depends(verify_user)):
     chat_engine.create_conversation(conv_id)
 
     # Send initial greeting
-    greeting = chat_engine.chat(conv_id, "hello")
+    user_id = token_data.get("sub", "unknown")
+    greeting = chat_engine.chat(conv_id, "hello", user_id=user_id)
 
     return {
         "conversation_id": conv_id,

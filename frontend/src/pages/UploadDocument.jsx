@@ -32,12 +32,12 @@ function UploadDocument() {
   const [file, setFile] = useState(null)
   const [fileId, setFileId] = useState(null)
   const [frameworks, setFrameworks] = useState({
-    iso27001: true,
+    iso27001: false,
     iso9001: false,
     nist: false,
     gdpr: false,
   })
-  const [includeCIA, setIncludeCIA] = useState(true)
+  const [includeCIA, setIncludeCIA] = useState(false)
   const [loading, setLoading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(null)
   const navigate = useNavigate()
@@ -71,19 +71,7 @@ function UploadDocument() {
       toast.success('Document uploaded successfully!')
     } catch (error) {
       console.error('Upload error:', error)
-      // Fallback to demo mode when backend is unavailable
-      const mockFileId = `demo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      const mockResponse = {
-        file_id: mockFileId,
-        file_name: uploadedFile.name,
-        file_hash: `sha256_${Math.random().toString(36).substr(2, 32)}`,
-        file_size: uploadedFile.size,
-        uploaded_at: new Date().toISOString()
-      }
-      setFileId(mockFileId)
-      setUploadProgress(mockResponse)
-      setActiveStep(1)
-      toast.warning('Running in demo mode (backend unavailable)')
+      toast.error(error?.response?.data?.detail || 'Upload failed. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -119,10 +107,18 @@ function UploadDocument() {
         return
       }
 
+      const securityFrameworks = ['iso27001', 'nist', 'gdpr']
+      const hasSecurityFramework = selectedFrameworks.some((fw) => securityFrameworks.includes(fw))
+      const shouldIncludeCIA = includeCIA && hasSecurityFramework
+
+      if (includeCIA && !hasSecurityFramework) {
+        toast.info('CIA analysis is intended for security/privacy frameworks and was skipped for this run.')
+      }
+
       const response = await complianceAPI.analyzeDocument(
         fileId,
         selectedFrameworks,
-        includeCIA,
+        shouldIncludeCIA,
         frameworks.iso9001
       )
 
@@ -131,250 +127,8 @@ function UploadDocument() {
       navigate(`/results/${response.analysis_id}`, { state: { results: response } })
     } catch (error) {
       console.error('Analysis error:', error)
-      // Generate mock analysis results for demo mode
-      const mockAnalysisId = `analysis_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      const selectedFrameworks = Object.keys(frameworks).filter((key) => frameworks[key])
-      
-      const mockResults = {
-        analysis_id: mockAnalysisId,
-        file_name: file?.name || 'demo_document.pdf',
-        frameworks: selectedFrameworks,
-        compliance_results: {
-          iso27001: {
-            compliance_percentage: 78.5,
-            matched_controls_count: 89,
-            total_controls: 114,
-            total_clauses: 45,
-            matched_clauses: 35,
-            missing_controls: [
-              { control_id: 'A.5.1', title: 'Policies for information security', category: 'Organizational', priority: 'High' },
-              { control_id: 'A.5.15', title: 'Access control', category: 'Access Control', priority: 'High' },
-              { control_id: 'A.8.9', title: 'Configuration management', category: 'Asset Management', priority: 'Medium' },
-              { control_id: 'A.8.19', title: 'Installation of software', category: 'Asset Management', priority: 'Medium' },
-              { control_id: 'A.8.23', title: 'Web filtering', category: 'Asset Management', priority: 'Low' }
-            ],
-            weak_clauses: [
-              { text: 'Passwords should be changed periodically', section: '2.1', reason: 'Missing specific timeframe requirements' }
-            ]
-          }
-        },
-        cia_analysis: includeCIA ? {
-          cia_balance_index: 72.4,
-          balance_rating: 'Good',
-          cia_coverage: {
-            confidentiality: 85,
-            integrity: 70,
-            availability: 62
-          },
-          confidentiality_score: 85,
-          integrity_score: 70,
-          availability_score: 62,
-          classification: 'Confidentiality-Heavy',
-          recommendations: [
-            'Increase availability controls by implementing redundancy measures',
-            'Add more integrity validation clauses for data verification',
-            'Balance CIA triad by strengthening availability requirements'
-          ]
-        } : null,
-        risk_prediction: {
-          risk_level: 'Medium Risk',
-          probability: 0.42,
-          confidence: 87,
-          probability_distribution: {
-            'Low Risk': 25,
-            'Medium Risk': 58,
-            'High Risk': 17
-          },
-          recommendations: [
-            'Address missing high-priority controls (A.5.1, A.5.15)',
-            'Strengthen policy statements with specific requirements',
-            'Increase CIA balance by adding availability controls',
-            'Implement regular compliance reviews'
-          ]
-        },
-        audit_readiness: {
-          audit_readiness_score: 78.5,
-          readiness_level: 'GOOD',
-          score: 78.5,
-          level: 'GOOD',
-          recommendation: 'Your organization shows good compliance posture. Focus on resolving high-priority missing controls before the audit.'
-        },
-        hybrid_analysis: {
-          overall_cci: 68.4,
-          cci_scores: { iso27001: 68.4 },
-          layer1_structural: {
-            iso27001: {
-              structural_score: 65,
-              present: 18,
-              partial: 8,
-              missing: 7,
-              section_results: [
-                { clause: 'A.5.1', title: 'Policies for information security', status: 'present', keyword_coverage: 85, cia_pillar: 'confidentiality' },
-                { clause: 'A.5.15', title: 'Access control', status: 'missing', keyword_coverage: 0, cia_pillar: 'confidentiality' },
-                { clause: 'A.8.9', title: 'Configuration management', status: 'partial', keyword_coverage: 40, cia_pillar: 'integrity' },
-                { clause: 'A.8.24', title: 'Use of cryptography', status: 'present', keyword_coverage: 92, cia_pillar: 'confidentiality' },
-                { clause: 'A.8.14', title: 'Redundancy of information processing', status: 'missing', keyword_coverage: 0, cia_pillar: 'availability' },
-              ],
-              cia_structural_flags: { missing_confidentiality: 2, missing_integrity: 1, missing_availability: 3 }
-            }
-          },
-          layer2_semantic: {
-            iso27001: {
-              semantic_score: 72,
-              strong_count: 18,
-              partial_count: 12,
-              weak_count: 15,
-              clause_matches: [
-                { clause_text: 'All employees must follow password policies set by IT department', best_control_id: 'A.5.17', best_control_title: 'Authentication information', similarity: 0.82, compliance_level: 'strong' },
-                { clause_text: 'Data backups should be performed weekly', best_control_id: 'A.8.13', best_control_title: 'Information backup', similarity: 0.75, compliance_level: 'strong' },
-                { clause_text: 'Visitors must sign in at reception', best_control_id: 'A.7.2', best_control_title: 'Physical entry', similarity: 0.58, compliance_level: 'partial' },
-                { clause_text: 'Software updates are installed when available', best_control_id: 'A.8.19', best_control_title: 'Installation of software', similarity: 0.48, compliance_level: 'partial' },
-                { clause_text: 'Company assets are tracked in a spreadsheet', best_control_id: 'A.5.9', best_control_title: 'Inventory of information', similarity: 0.35, compliance_level: 'weak' },
-              ]
-            }
-          },
-          layer3_reasoning: {
-            iso27001: {
-              reasoning_confidence: 68,
-              source: 'rule_based',
-              executive_summary: 'The document demonstrates moderate compliance with ISO 27001 standards. Major gaps exist in access control policies and availability measures. Immediate attention is needed for 7 missing mandatory sections.',
-              gap_explanations: [
-                { explanation: 'Access control policy (A.5.15) is entirely absent - this is a critical requirement for information security management.', cia_impact: 'High impact on Confidentiality' },
-                { explanation: 'No redundancy or failover provisions found (A.8.14) - availability of critical systems is not addressed.', cia_impact: 'High impact on Availability' },
-                { explanation: 'Configuration management (A.8.9) is only partially addressed - lacks specific baselines and change tracking procedures.', cia_impact: 'Medium impact on Integrity' },
-              ],
-              improvement_suggestions: [
-                'Add a dedicated access control policy section with role-based access definitions',
-                'Implement and document redundancy measures for critical information processing facilities',
-                'Strengthen configuration management with baseline configurations and automated change tracking',
-                'Replace vague language ("should", "may") with mandatory language ("shall", "must")',
-              ],
-              rewritten_clauses: [
-                { original: 'Passwords should be changed periodically', improved: 'Passwords shall be changed every 90 days and must meet complexity requirements of minimum 12 characters with uppercase, lowercase, numeric, and special characters.' },
-                { original: 'Data backups should be performed weekly', improved: 'Data backups shall be performed daily for critical systems and weekly for non-critical systems, with backup integrity verified through automated restoration testing monthly.' },
-              ],
-              cia_impact_summary: {
-                confidentiality: { status: 'at_risk', impact: 'Missing access control and 2 confidentiality-related controls' },
-                integrity: { status: 'covered', impact: 'Partial coverage with room for improvement in change management' },
-                availability: { status: 'at_risk', impact: 'No redundancy or disaster recovery provisions documented' }
-              }
-            }
-          }
-        },
-        analyzed_at: new Date().toISOString()
-      }
-
-      // Add mock results for other selected frameworks
-      if (frameworks.iso9001) {
-        mockResults.compliance_results.iso9001 = {
-          compliance_percentage: 82.0,
-          matched_controls_count: 82,
-          total_controls: 100,
-          total_clauses: 45,
-          matched_clauses: 37,
-          missing_controls: [
-            { control_id: 'Q.4.1', title: 'Quality objectives', category: 'Planning', priority: 'High' },
-            { control_id: 'Q.7.1', title: 'Resources', category: 'Support', priority: 'Medium' }
-          ]
-        }
-        mockResults.hybrid_analysis.cci_scores.iso9001 = 74.2
-        mockResults.hybrid_analysis.layer1_structural.iso9001 = {
-          structural_score: 72, present: 8, partial: 2, missing: 2,
-          section_results: [
-            { clause: 'Q.4.1', title: 'Quality objectives', status: 'missing', keyword_coverage: 0, cia_pillar: null },
-            { clause: 'Q.5.2', title: 'Quality policy', status: 'present', keyword_coverage: 88, cia_pillar: null },
-          ]
-        }
-        mockResults.hybrid_analysis.layer2_semantic.iso9001 = {
-          semantic_score: 78, strong_count: 20, partial_count: 10, weak_count: 7, clause_matches: []
-        }
-        mockResults.hybrid_analysis.layer3_reasoning.iso9001 = {
-          reasoning_confidence: 71, source: 'rule_based',
-          executive_summary: 'Good alignment with ISO 9001 quality management requirements. Minor gaps in quality objectives documentation.',
-          gap_explanations: [{ explanation: 'Quality objectives (Q.4.1) not explicitly documented.', cia_impact: null }],
-          improvement_suggestions: ['Define measurable quality objectives aligned with quality policy'],
-          rewritten_clauses: [],
-          cia_impact_summary: {}
-        }
-        mockResults.hybrid_analysis.overall_cci = Math.round(
-          (mockResults.hybrid_analysis.cci_scores.iso27001 + 74.2) / 2 * 10
-        ) / 10
-      }
-
-      if (frameworks.nist) {
-        mockResults.compliance_results.nist = {
-          compliance_percentage: 75.0,
-          matched_controls_count: 81,
-          total_controls: 108,
-          total_clauses: 45,
-          matched_clauses: 34,
-          missing_controls: [
-            { control_id: 'ID.AM-1', title: 'Physical devices and systems', category: 'Identify', priority: 'High' },
-            { control_id: 'PR.AC-1', title: 'Identities and credentials', category: 'Protect', priority: 'High' }
-          ]
-        }
-        const fwCount = Object.keys(mockResults.hybrid_analysis.cci_scores).length
-        mockResults.hybrid_analysis.cci_scores.nist = 66.8
-        mockResults.hybrid_analysis.layer1_structural.nist = {
-          structural_score: 62, present: 7, partial: 3, missing: 4,
-          section_results: [
-            { clause: 'ID.AM-1', title: 'Physical devices and systems', status: 'missing', keyword_coverage: 0, cia_pillar: 'availability' },
-            { clause: 'PR.AC-1', title: 'Identities and credentials', status: 'missing', keyword_coverage: 0, cia_pillar: 'confidentiality' },
-          ]
-        }
-        mockResults.hybrid_analysis.layer2_semantic.nist = {
-          semantic_score: 70, strong_count: 15, partial_count: 11, weak_count: 8, clause_matches: []
-        }
-        mockResults.hybrid_analysis.layer3_reasoning.nist = {
-          reasoning_confidence: 65, source: 'rule_based',
-          executive_summary: 'Moderate alignment with NIST CSF. Gaps in asset management and identity management functions.',
-          gap_explanations: [{ explanation: 'Asset inventory (ID.AM-1) not addressed.', cia_impact: 'Medium impact on Availability' }],
-          improvement_suggestions: ['Implement comprehensive asset inventory covering all physical and virtual devices'],
-          rewritten_clauses: [],
-          cia_impact_summary: {}
-        }
-        const total = Object.values(mockResults.hybrid_analysis.cci_scores).reduce((a, b) => a + b, 0)
-        mockResults.hybrid_analysis.overall_cci = Math.round(total / Object.keys(mockResults.hybrid_analysis.cci_scores).length * 10) / 10
-      }
-
-      if (frameworks.gdpr) {
-        mockResults.compliance_results.gdpr = {
-          compliance_percentage: 71.0,
-          matched_controls_count: 40,
-          total_controls: 57,
-          total_clauses: 45,
-          matched_clauses: 32,
-          missing_controls: [
-            { control_id: 'Art.32', title: 'Security of processing', category: 'Security', priority: 'High' },
-            { control_id: 'Art.33', title: 'Breach notification', category: 'Breach', priority: 'High' }
-          ]
-        }
-        mockResults.hybrid_analysis.cci_scores.gdpr = 63.5
-        mockResults.hybrid_analysis.layer1_structural.gdpr = {
-          structural_score: 58, present: 5, partial: 3, missing: 3,
-          section_results: [
-            { clause: 'Art.32', title: 'Security of processing', status: 'missing', keyword_coverage: 0, cia_pillar: 'confidentiality' },
-            { clause: 'Art.33', title: 'Breach notification', status: 'missing', keyword_coverage: 0, cia_pillar: 'integrity' },
-          ]
-        }
-        mockResults.hybrid_analysis.layer2_semantic.gdpr = {
-          semantic_score: 68, strong_count: 14, partial_count: 10, weak_count: 8, clause_matches: []
-        }
-        mockResults.hybrid_analysis.layer3_reasoning.gdpr = {
-          reasoning_confidence: 62, source: 'rule_based',
-          executive_summary: 'Below-average GDPR compliance. Critical gaps in security processing and breach notification procedures.',
-          gap_explanations: [{ explanation: 'Breach notification process (Art.33) not documented.', cia_impact: 'High impact on Integrity' }],
-          improvement_suggestions: ['Establish a 72-hour breach notification procedure as required by GDPR Art.33'],
-          rewritten_clauses: [],
-          cia_impact_summary: { confidentiality: { status: 'at_risk', impact: 'Processing security not addressed' } }
-        }
-        const total = Object.values(mockResults.hybrid_analysis.cci_scores).reduce((a, b) => a + b, 0)
-        mockResults.hybrid_analysis.overall_cci = Math.round(total / Object.keys(mockResults.hybrid_analysis.cci_scores).length * 10) / 10
-      }
-saveToHistory(mockResults)
-      
-      toast.info('Demo mode: Showing sample analysis results')
-      navigate(`/results/${mockAnalysisId}`, { state: { results: mockResults } })
+      toast.error(error?.response?.data?.detail || 'Analysis failed. Please retry after re-uploading the document.')
+      setActiveStep(1)
     } finally {
       setLoading(false)
     }

@@ -66,6 +66,9 @@ class HybridCompliancePipeline:
         if frameworks is None:
             frameworks = ["iso27001"]
 
+        security_frameworks = {"iso27001", "nist", "gdpr"}
+        include_cia_effective = include_cia and any(fw in security_frameworks for fw in frameworks)
+
         # ── Step 1: Text Extraction ───────────────────────────────
         if file_path:
             logger.info(f"Processing document: {file_path}")
@@ -101,7 +104,7 @@ class HybridCompliancePipeline:
 
             # Layer 3: Reasoning (needs L1 + L2 outputs)
             cia_data = None
-            if include_cia:
+            if include_cia_effective:
                 cia_data = cia_validator.analyze_document_cia(clauses)
 
             l3 = reasoning_engine.analyze(l1, l2, cia_data, fw)
@@ -119,7 +122,7 @@ class HybridCompliancePipeline:
 
         # ── Step 5: CIA Analysis (cross-framework) ────────────────
         cia_analysis = None
-        if include_cia:
+        if include_cia_effective:
             cia_analysis = cia_validator.analyze_document_cia(clauses)
 
         # ── Step 6: Audit Risk Prediction ─────────────────────────
@@ -127,16 +130,23 @@ class HybridCompliancePipeline:
         risk_input = {
             "missing_controls_count": layer2_results[primary_fw].get("total_controls", 100)
                                      - layer2_results[primary_fw].get("matched_controls", 0),
-            "cia_balance_index": cia_analysis.get("cia_balance_index", 50) if cia_analysis else 50,
+            "total_controls": layer2_results[primary_fw].get("total_controls", 0),
+            "cia_balance_index": cia_analysis.get("cia_balance_index") if cia_analysis else None,
             "weak_clauses": [
                 m for m in layer2_results[primary_fw].get("clause_matches", [])
                 if m.get("compliance_level") == "weak"
             ],
             "total_clauses": len(clauses),
             "compliance_percentage": layer2_results[primary_fw].get("compliance_percentage", 0),
+            "structural_score": layer1_results[primary_fw].get("structural_score", 0),
+            "framework": primary_fw,
+            "missing_critical_count": sum(
+                1 for mc in layer2_results[primary_fw].get("missing_controls", [])
+                if str(mc.get("priority", "")).lower() in {"critical", "high"}
+            ),
         }
         risk_prediction = audit_predictor.predict_risk(risk_input)
-        audit_readiness = audit_predictor.get_audit_readiness_score(risk_prediction)
+        audit_readiness = audit_predictor.get_audit_readiness_score(risk_prediction, risk_input)
 
         # ── Step 7: Build legacy-compatible compliance_results ────
         compliance_results = {}

@@ -312,6 +312,11 @@ class RuleBasedEngine:
 
         text_lower = full_text.lower()
         all_clause_text = " ".join(c.get("text", "") for c in clauses).lower()
+        section_blobs = [
+            f"{(c.get('section') or '').lower()} {(c.get('text') or '').lower()}".strip()
+            for c in clauses
+            if (c.get("text") or "").strip()
+        ]
 
         section_results: List[Dict] = []
         cia_flags = {"confidentiality": [], "integrity": [], "availability": []}
@@ -320,16 +325,48 @@ class RuleBasedEngine:
         missing = 0
 
         for req in required:
-            matched_kw = [
-                kw for kw in req["keywords"]
-                if kw in text_lower or kw in all_clause_text
-            ]
-            ratio = len(matched_kw) / len(req["keywords"]) if req["keywords"] else 0
+            matched_kw = []
+            weighted_hits = 0.0
+            search_text = f"{text_lower} {all_clause_text}"
 
-            if ratio >= 0.5:
+            # Clause/section identifiers in the document are strong structural evidence.
+            clause_id = (req.get("clause") or "").lower()
+            clause_id_hit = False
+            if clause_id:
+                clause_id_variants = {
+                    clause_id,
+                    clause_id.replace(".", " "),
+                    clause_id.replace(".", ""),
+                }
+                clause_id_hit = any(v and v in search_text for v in clause_id_variants)
+
+            for kw in req["keywords"]:
+                # Evaluate each keyword against the best local section/paragraph match.
+                if section_blobs:
+                    hit_score = max(self._keyword_hit_score(blob, kw) for blob in section_blobs)
+                else:
+                    hit_score = self._keyword_hit_score(search_text, kw)
+                if hit_score > 0:
+                    matched_kw.append(kw)
+                    weighted_hits += hit_score
+
+            ratio = (weighted_hits / len(req["keywords"])) if req["keywords"] else 0
+
+            # Framework-specific thresholds: ISO 9001 clauses are often concise and vary in wording.
+            if framework == "iso9001":
+                present_threshold = 0.35
+                partial_threshold = 0.15
+            else:
+                present_threshold = 0.55
+                partial_threshold = 0.18
+
+            if clause_id_hit:
+                ratio = max(ratio, present_threshold)
+
+            if ratio >= present_threshold:
                 status = "present"
                 present += 1
-            elif ratio > 0:
+            elif ratio >= partial_threshold:
                 status = "partial"
                 partial += 1
             else:
@@ -369,6 +406,28 @@ class RuleBasedEngine:
             "section_results": section_results,
             "cia_structural_flags": cia_flags,
         }
+
+    @staticmethod
+    def _keyword_hit_score(text: str, keyword: str) -> float:
+        """Return weighted keyword match score (0, 0.6, 1.0)."""
+        kw = keyword.lower().strip()
+        if not kw:
+            return 0.0
+
+        if kw in text:
+            return 1.0
+
+        # Token-overlap fallback for wording variants.
+        tokens = [t for t in re.findall(r"[a-z0-9]+", kw) if len(t) > 2]
+        if not tokens:
+            return 0.0
+
+        matched_tokens = sum(1 for t in tokens if t in text)
+        token_ratio = matched_tokens / len(tokens)
+        if token_ratio >= 0.67:
+            return 0.6
+
+        return 0.0
 
     def analyze_multi(
         self,

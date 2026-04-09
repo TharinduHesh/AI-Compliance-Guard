@@ -6,6 +6,7 @@ Handles environment variables and application settings
 from pydantic_settings import BaseSettings
 from typing import List
 from pathlib import Path
+from pydantic import model_validator
 
 
 class Settings(BaseSettings):
@@ -22,11 +23,11 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api/v1"
     
     # Security
-    SECRET_KEY: str = "development-secret-key-change-in-production"
+    SECRET_KEY: str = "dev-secret-do-not-use-in-production"
     AES_ENCRYPTION_KEY: str = "dev-32-byte-key-change-prod!!"
-    JWT_SECRET: str = "jwt-secret-change-in-production"
+    JWT_SECRET: str = "dev-jwt-secret-do-not-use-in-production"
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRATION_HOURS: int = 24
+    JWT_EXPIRATION_HOURS: int = 12
     
     # Firebase
     FIREBASE_API_KEY: str = ""
@@ -44,7 +45,9 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "gemini"           # "gemini", "llama_cpp", "transformers", or "none" (rule-based fallback)
     
     # Gemini Configuration
-    GEMINI_API_KEY: str = "AIzaSyCLzO79BacrsnZMUBMot_DaCZnVmoapCWk"               # Google Gemini API key
+    GEMINI_API_KEY: str = ""               # Set via environment variable
+    GEMINI_API_KEY_SECONDARY: str = ""     # Optional second key for user-based routing
+    GEMINI_KEY_SELECTION_MODE: str = "hash"  # hash | primary
     GEMINI_MODEL: str = "gemini-2.5-flash"  # Gemini model name
     GEMINI_MAX_TOKENS: int = 4096
     GEMINI_TEMPERATURE: float = 0.3
@@ -86,6 +89,51 @@ class Settings(BaseSettings):
     
     # Database
     DB_ENCRYPTION_ENABLED: bool = True
+
+    @model_validator(mode="after")
+    def validate_security_settings(self):
+        """Fail fast on insecure production configuration."""
+        environment = (self.ENVIRONMENT or "").strip().lower()
+        is_production = environment in {"prod", "production"}
+
+        if not is_production:
+            return self
+
+        insecure_markers = {
+            "development-secret-key-change-in-production",
+            "jwt-secret-change-in-production",
+            "dev-secret-do-not-use-in-production",
+            "dev-jwt-secret-do-not-use-in-production",
+            "dev-32-byte-key-change-prod!!",
+            "",
+        }
+
+        if self.SECRET_KEY in insecure_markers:
+            raise ValueError("SECRET_KEY must be set to a strong, unique value in production")
+
+        if self.JWT_SECRET in insecure_markers:
+            raise ValueError("JWT_SECRET must be set to a strong, unique value in production")
+
+        if len(self.AES_ENCRYPTION_KEY or "") < 32 or self.AES_ENCRYPTION_KEY in insecure_markers:
+            raise ValueError("AES_ENCRYPTION_KEY must be at least 32 characters and not a default in production")
+
+        if self.CORS_ORIGINS and any(origin.strip() == "*" for origin in self.CORS_ORIGINS):
+            raise ValueError("CORS_ORIGINS cannot contain wildcard '*' in production")
+
+        if not self.CORS_ORIGINS:
+            raise ValueError("CORS_ORIGINS must be explicitly configured in production")
+
+        if (self.LLM_PROVIDER or "").strip().lower() == "gemini":
+            has_primary = bool((self.GEMINI_API_KEY or "").strip())
+            has_secondary = bool((self.GEMINI_API_KEY_SECONDARY or "").strip())
+            if not (has_primary or has_secondary):
+                raise ValueError("At least one Gemini API key is required when LLM_PROVIDER is 'gemini' in production")
+
+            mode = (self.GEMINI_KEY_SELECTION_MODE or "hash").strip().lower()
+            if mode not in {"hash", "primary"}:
+                raise ValueError("GEMINI_KEY_SELECTION_MODE must be 'hash' or 'primary'")
+
+        return self
     
     class Config:
         env_file = ".env"

@@ -23,8 +23,8 @@ from app.config.settings import settings
 logger = logging.getLogger(__name__)
 
 # Thresholds
-STRONG_THRESHOLD = 0.70
-PARTIAL_THRESHOLD = 0.45
+STRONG_THRESHOLD = 0.66
+PARTIAL_THRESHOLD = 0.46
 
 
 class SemanticSimilarityEngine:
@@ -124,9 +124,20 @@ class SemanticSimilarityEngine:
         if self._model is None or len(control_embeddings) == 0:
             return self._fallback_analysis(clauses, framework)
 
-        clause_texts = [c.get("text", "") for c in clauses]
+        clause_texts = []
+        for c in clauses:
+            text = (c.get("text", "") or "").strip()
+            # Ignore extremely short/noisy fragments that degrade similarity quality.
+            if len(text) < 30 or len(text.split()) < 5:
+                continue
+            clause_texts.append(text)
+
         if not clause_texts:
             return self._empty_result(framework)
+
+        relevance = self._framework_relevance(" ".join(clause_texts), framework)
+        dynamic_strong = min(0.85, STRONG_THRESHOLD + (1.0 - relevance) * 0.05)
+        dynamic_partial = min(0.68, PARTIAL_THRESHOLD + (1.0 - relevance) * 0.06)
 
         # Encode document clauses
         clause_embeddings = self._model.encode(
@@ -146,10 +157,10 @@ class SemanticSimilarityEngine:
             best_sim = float(sim_matrix[i][best_idx])
             ctrl = controls[best_idx]
 
-            if best_sim >= STRONG_THRESHOLD:
+            if best_sim >= dynamic_strong:
                 level = "strong"
                 strong += 1
-            elif best_sim >= PARTIAL_THRESHOLD:
+            elif best_sim >= dynamic_partial:
                 level = "partial"
                 partial += 1
             else:
@@ -172,7 +183,7 @@ class SemanticSimilarityEngine:
             cid = ctrl.get("id", f"ctrl_{j}")
             score = float(control_max[j])
             control_coverage[cid] = round(score, 4)
-            if score >= PARTIAL_THRESHOLD:
+            if score >= dynamic_partial:
                 matched_ids.add(cid)
 
         # Missing controls
@@ -188,9 +199,13 @@ class SemanticSimilarityEngine:
         ]
 
         total = len(clause_texts)
-        semantic_score = round(
-            ((strong * 1.0 + partial * 0.5) / total) * 100, 2
-        ) if total else 0
+
+        # Blend clause-level quality and control-level coverage for a more stable score.
+        clause_quality = ((strong * 1.0 + partial * 0.5) / total) * 100 if total else 0
+        control_coverage_pct_raw = (len(matched_ids) / len(controls) * 100) if controls else 0
+        relevance_weight = 0.75 + (0.25 * relevance)
+        control_coverage_pct = control_coverage_pct_raw * relevance_weight
+        semantic_score = round(((clause_quality * 0.45) + (control_coverage_pct * 0.55)) * (0.85 + (0.15 * relevance)), 2)
 
         return {
             "framework": framework,
@@ -201,11 +216,32 @@ class SemanticSimilarityEngine:
             "total_clauses": total,
             "matched_controls": len(matched_ids),
             "total_controls": len(controls),
-            "compliance_percentage": round(len(matched_ids) / len(controls) * 100, 2) if controls else 0,
+            "compliance_percentage": round(control_coverage_pct, 2),
+            "framework_relevance": round(relevance * 100, 2),
             "clause_matches": clause_matches,
             "control_coverage": control_coverage,
             "missing_controls": missing_controls,
         }
+
+    @staticmethod
+    def _framework_relevance(text: str, framework: str) -> float:
+        """Estimate whether document language fits selected framework to avoid cross-mapping inflation."""
+        lexicons = {
+            "iso9001": ["quality", "qms", "customer", "nonconformity", "corrective action", "management review", "continual improvement"],
+            "iso27001": ["information security", "isms", "access control", "confidentiality", "integrity", "availability", "incident", "cryptography"],
+            "nist": ["cybersecurity", "identify", "protect", "detect", "respond", "recover", "nist"],
+            "gdpr": ["personal data", "data subject", "lawful basis", "consent", "controller", "processor", "privacy", "breach"],
+        }
+        terms = lexicons.get(framework, [])
+        if not terms:
+            return 1.0
+
+        lower = text.lower()
+        hits = sum(1 for t in terms if t in lower)
+        ratio = hits / len(terms)
+
+        # Keep a floor to avoid over-penalizing valid edge cases.
+        return max(0.55, min(1.0, 0.55 + ratio * 0.45))
 
     def analyze_multi(
         self,
