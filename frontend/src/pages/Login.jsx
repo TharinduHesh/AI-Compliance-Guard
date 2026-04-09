@@ -58,9 +58,18 @@ export default function Login({ onAuth }) {
 
       onAuth && onAuth()
     } catch (err) {
-      const msg = err?.response?.data?.detail
-      if (msg) setError(typeof msg === 'string' ? msg : JSON.stringify(msg))
-      else setError('Invalid Company ID or password')
+      const status = err?.response?.status
+      const detail = err?.response?.data?.detail
+
+      if (status === 401) {
+        setError(typeof detail === 'string' ? detail : 'Invalid Company ID or password')
+      } else if (status >= 500) {
+        setError('Server error while signing in. Please try again in a moment.')
+      } else if (status) {
+        setError(typeof detail === 'string' ? detail : `Login failed (HTTP ${status}).`)
+      } else {
+        setError('Cannot reach backend API. Check VITE_API_URL and backend deployment.')
+      }
     } finally {
       setLoading(false)
     }
