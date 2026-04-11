@@ -88,6 +88,7 @@ export default function UserDashboard() {
   const currentUser = (() => {
     try { return JSON.parse(localStorage.getItem('user') || '{}') } catch { return {} }
   })()
+  const isAdmin = currentUser.role === 'admin'
 
   /* ── Analysis history from localStorage ──────────────────── */
   const [history, setHistory] = useState([])
@@ -124,7 +125,7 @@ export default function UserDashboard() {
   ]
 
   const quickActions = [
-    { icon: <ChatIcon />, title: 'AI Chat', desc: 'Ask compliance questions', path: '/chat', color: '#35627A' },
+    ...(!isAdmin ? [{ icon: <ChatIcon />, title: 'AI Chat', desc: 'Ask compliance questions', path: '/chat', color: '#35627A' }] : []),
     { icon: <UploadIcon />, title: 'Upload Document', desc: 'Analyze a new document', path: '/upload', color: '#B46258' },
     { icon: <HistoryIcon />, title: 'History', desc: 'View past analyses', path: '/history', color: '#8E9A98' },
     { icon: <DocIcon />, title: 'Frameworks', desc: 'Browse supported frameworks', path: '/frameworks', color: '#A6A9D0' },
