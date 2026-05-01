@@ -53,7 +53,6 @@ import {
   DarkMode as DarkModeIcon,
   LightMode as LightModeIcon,
   Chat as ChatIcon,
-  Description as DocIcon,
   FolderOpen as FolderIcon,
   Visibility as ViewIcon,
   Download as DownloadIcon,
@@ -170,17 +169,7 @@ export default function AdminDashboard() {
   const [actFilter, setActFilter] = useState('all')
   const [actPage, setActPage] = useState(0)
   const [actRowsPerPage, setActRowsPerPage] = useState(10)
-
-  // History state
-  const [historyData, setHistoryData] = useState([])
-  const [histLoading, setHistLoading] = useState(false)
-  const [histCategory, setHistCategory] = useState('all')
-  const [histSearch, setHistSearch] = useState('')
-  const [histPage, setHistPage] = useState(0)
-  const [histRowsPerPage, setHistRowsPerPage] = useState(10)
   const [historyDeletePeriod, setHistoryDeletePeriod] = useState('month')
-  const [historyDeleteDialogOpen, setHistoryDeleteDialogOpen] = useState(false)
-  const [historyDeleting, setHistoryDeleting] = useState(false)
 
   // User Documents state
   const [userDocs, setUserDocs] = useState([])
@@ -219,15 +208,6 @@ export default function AdminDashboard() {
     finally { setActLoading(false) }
   }, [])
 
-  const fetchHistory = useCallback(async () => {
-    setHistLoading(true)
-    try {
-      const cat = histCategory === 'all' ? null : histCategory
-      setHistoryData(await adminAPI.getHistory(cat, null, 500))
-    } catch { /* silent */ }
-    finally { setHistLoading(false) }
-  }, [histCategory])
-
   const fetchUserDocs = useCallback(async () => {
     setDocsLoading(true)
     try { setUserDocs(await adminAPI.getUserDocuments(null, 500)) }
@@ -261,10 +241,10 @@ export default function AdminDashboard() {
   }, [])
 
   useEffect(() => {
-    if (isAdmin) { fetchUsers(); fetchActivities(); fetchHistory(); fetchUserDocs(); fetchUserFiles(); fetchAnalytics(); fetchAutoDeleteSettings() }
-  }, [isAdmin, fetchUsers, fetchActivities, fetchHistory, fetchUserDocs, fetchUserFiles, fetchAnalytics, fetchAutoDeleteSettings])
+    if (isAdmin) { fetchUsers(); fetchActivities(); fetchUserDocs(); fetchUserFiles(); fetchAnalytics(); fetchAutoDeleteSettings() }
+  }, [isAdmin, fetchUsers, fetchActivities, fetchUserDocs, fetchUserFiles, fetchAnalytics, fetchAutoDeleteSettings])
 
-  const refreshAll = () => { fetchUsers(); fetchActivities(); fetchHistory(); fetchUserDocs(); fetchUserFiles(); fetchAnalytics(); fetchAutoDeleteSettings() }
+  const refreshAll = () => { fetchUsers(); fetchActivities(); fetchUserDocs(); fetchUserFiles(); fetchAnalytics(); fetchAutoDeleteSettings() }
 
   /* ── Add user ──────────────────────────────────────────── */
   const handleOpenAdd = () => {
@@ -298,22 +278,6 @@ export default function AdminDashboard() {
       setDeleteDialogOpen(false); setSelectedUser(null)
       refreshAll()
     } catch (e) { toast.error(e?.response?.data?.detail || 'Failed to delete user') }
-  }
-
-  const handleDeleteHistoryByPeriod = async () => {
-    setHistoryDeleting(true)
-    try {
-      const res = await adminAPI.deleteActivityLogs(historyDeletePeriod)
-      toast.success(
-        `Deleted ${res.deleted || 0} history records and ${res.deleted_files || 0} files (${historyDeletePeriod.replace('_', ' ')})`
-      )
-      setHistoryDeleteDialogOpen(false)
-      refreshAll()
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Failed to delete history')
-    } finally {
-      setHistoryDeleting(false)
-    }
   }
 
   const handleSaveAutoDeleteSettings = async () => {
@@ -492,7 +456,6 @@ export default function AdminDashboard() {
           <Tab icon={<PersonIcon />} iconPosition="start" label="User Management" sx={{ textTransform: 'none', fontWeight: 600 }} />
           <Tab icon={<FolderIcon />} iconPosition="start" label="User Documents" sx={{ textTransform: 'none', fontWeight: 600 }} />
           <Tab icon={<HistoryIcon />} iconPosition="start" label="User Activities" sx={{ textTransform: 'none', fontWeight: 600 }} />
-          <Tab icon={<DocIcon />} iconPosition="start" label="History" sx={{ textTransform: 'none', fontWeight: 600 }} />
           <Tab icon={<AnalysisIcon />} iconPosition="start" label="Monitoring" sx={{ textTransform: 'none', fontWeight: 600 }} />
         </Tabs>
 
@@ -849,152 +812,8 @@ export default function AdminDashboard() {
           </Box>
         )}
 
-        {/* ────────────── TAB 3: History ─────────────────── */}
+        {/* ────────────── TAB 3: Monitoring ─────────────── */}
         {tab === 3 && (
-          <Box sx={{ p: 2 }}>
-            {/* Toolbar */}
-            <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-              <TextField
-                size="small" placeholder="Search user or detail..."
-                value={histSearch} onChange={e => { setHistSearch(e.target.value); setHistPage(0) }}
-                InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
-                sx={{ minWidth: 220 }}
-              />
-              <TextField
-                select size="small" value={histCategory}
-                onChange={e => { setHistCategory(e.target.value); setHistPage(0) }}
-                InputProps={{ startAdornment: <InputAdornment position="start"><FilterIcon fontSize="small" /></InputAdornment> }}
-                sx={{ minWidth: 180 }}
-              >
-                <MenuItem value="all">All History</MenuItem>
-                <MenuItem value="upload">Uploads & Analyses</MenuItem>
-                <MenuItem value="chat">Chat Messages</MenuItem>
-              </TextField>
-              <TextField
-                select
-                size="small"
-                value={historyDeletePeriod}
-                onChange={e => setHistoryDeletePeriod(e.target.value)}
-                sx={{ minWidth: 170 }}
-              >
-                <MenuItem value="week">Once a week</MenuItem>
-                <MenuItem value="month">Once a month</MenuItem>
-                <MenuItem value="three_months">Three months</MenuItem>
-              </TextField>
-              <Button
-                color="error"
-                variant="outlined"
-                startIcon={<DeleteIcon />}
-                onClick={() => setHistoryDeleteDialogOpen(true)}
-                sx={{ textTransform: 'none' }}
-              >
-                Delete History
-              </Button>
-              <Typography variant="body2" color="text.secondary" sx={{ ml: 'auto' }}>
-                {(() => {
-                  const f = historyData.filter(h => {
-                    if (histSearch) {
-                      const q = histSearch.toLowerCase()
-                      if (!h.user?.toLowerCase().includes(q) && !h.company_name?.toLowerCase().includes(q) && !h.detail?.toLowerCase().includes(q)) return false
-                    }
-                    return true
-                  })
-                  return `${f.length} records`
-                })()}
-              </Typography>
-            </Box>
-
-            <TableContainer>
-              {histLoading ? (
-                <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>
-              ) : (
-                (() => {
-                  const filtered = historyData.filter(h => {
-                    if (histSearch) {
-                      const q = histSearch.toLowerCase()
-                      if (!h.user?.toLowerCase().includes(q) && !h.company_name?.toLowerCase().includes(q) && !h.detail?.toLowerCase().includes(q)) return false
-                    }
-                    return true
-                  })
-                  return (
-                    <>
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow sx={{ bgcolor: theadBg }}>
-                            <TableCell sx={{ fontWeight: 700, width: 40 }}>#</TableCell>
-                            <TableCell sx={{ fontWeight: 700 }}>User</TableCell>
-                            <TableCell sx={{ fontWeight: 700 }}>Company Name</TableCell>
-                            <TableCell sx={{ fontWeight: 700 }}>Type</TableCell>
-                            <TableCell sx={{ fontWeight: 700 }}>Detail</TableCell>
-                            <TableCell sx={{ fontWeight: 700 }}>Date & Time</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {filtered.length === 0 ? (
-                            <TableRow>
-                              <TableCell colSpan={6} align="center">
-                                <Typography color="text.secondary" sx={{ py: 3 }}>No history records found</Typography>
-                              </TableCell>
-                            </TableRow>
-                          ) : (
-                            filtered
-                              .slice(histPage * histRowsPerPage, histPage * histRowsPerPage + histRowsPerPage)
-                              .map((h, idx) => (
-                                <TableRow key={idx} hover>
-                                  <TableCell>{histPage * histRowsPerPage + idx + 1}</TableCell>
-                                  <TableCell>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                      <Avatar sx={{ width: 26, height: 26, fontSize: 12, bgcolor: h.role === 'admin' ? 'warning.main' : 'primary.main' }}>
-                                        {h.user?.charAt(0)?.toUpperCase() || '?'}
-                                      </Avatar>
-                                      <strong>{h.user}</strong>
-                                    </Box>
-                                  </TableCell>
-                                  <TableCell>{h.company_name || '—'}</TableCell>
-                                  <TableCell>
-                                    <Chip
-                                      icon={h.action === 'chat' ? <ChatIcon fontSize="small" /> : h.action === 'upload' ? <UploadIcon fontSize="small" /> : <AnalysisIcon fontSize="small" />}
-                                      label={h.action === 'chat' ? 'Chat' : h.action === 'upload' ? 'Upload' : 'Analysis'}
-                                      size="small"
-                                      variant="outlined"
-                                      color={h.action === 'chat' ? 'info' : h.action === 'upload' ? 'primary' : 'warning'}
-                                      sx={{ fontSize: 12 }}
-                                    />
-                                  </TableCell>
-                                  <TableCell>
-                                    <Typography variant="body2" noWrap sx={{ maxWidth: 360 }}>
-                                      {h.detail || '—'}
-                                    </Typography>
-                                  </TableCell>
-                                  <TableCell>
-                                    <Typography variant="body2" color="text.secondary">
-                                      {fmtDate(h.timestamp)}
-                                    </Typography>
-                                  </TableCell>
-                                </TableRow>
-                              ))
-                          )}
-                        </TableBody>
-                      </Table>
-                      <TablePagination
-                        component="div"
-                        count={filtered.length}
-                        page={histPage}
-                        onPageChange={(_, p) => setHistPage(p)}
-                        rowsPerPage={histRowsPerPage}
-                        onRowsPerPageChange={e => { setHistRowsPerPage(parseInt(e.target.value, 10)); setHistPage(0) }}
-                        rowsPerPageOptions={[10, 25, 50]}
-                      />
-                    </>
-                  )
-                })()
-              )}
-            </TableContainer>
-          </Box>
-        )}
-
-        {/* ────────────── TAB 4: Monitoring ─────────────── */}
-        {tab === 4 && (
           <Box sx={{ p: 2 }}>
             {analyticsLoading ? (
               <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>
@@ -1240,33 +1059,6 @@ export default function AdminDashboard() {
           <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
           <Button onClick={handleDeleteConfirm} color="error" variant="contained" sx={{ borderRadius: 2, textTransform: 'none' }}>
             Delete
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Dialog
-        open={historyDeleteDialogOpen}
-        onClose={() => !historyDeleting && setHistoryDeleteDialogOpen(false)}
-      >
-        <DialogTitle sx={{ fontWeight: 700 }}>Delete Users History</DialogTitle>
-        <DialogContent>
-          <Typography>
-            Delete old users history, activities, and uploaded documents older than <strong>{historyDeletePeriod.replace('_', ' ')}</strong>?
-          </Typography>
-          <Typography variant="body2" color="error" sx={{ mt: 1 }}>
-            This action cannot be undone.
-          </Typography>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setHistoryDeleteDialogOpen(false)} disabled={historyDeleting}>Cancel</Button>
-          <Button
-            onClick={handleDeleteHistoryByPeriod}
-            color="error"
-            variant="contained"
-            disabled={historyDeleting}
-            sx={{ borderRadius: 2, textTransform: 'none' }}
-          >
-            {historyDeleting ? 'Deleting...' : 'Confirm Delete'}
           </Button>
         </DialogActions>
       </Dialog>

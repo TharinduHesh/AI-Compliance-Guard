@@ -38,7 +38,6 @@ import { useTheme as useAppTheme } from '../ThemeContext'
 const adminPages = [
   { name: 'Admin Panel', path: '/admin', icon: <AdminPanelSettingsIcon /> },
   { name: 'Dashboard', path: '/dashboard', icon: <DashboardIcon /> },
-  { name: 'History', path: '/history', icon: <HistoryIcon /> },
 ]
 
 const userPages = [
